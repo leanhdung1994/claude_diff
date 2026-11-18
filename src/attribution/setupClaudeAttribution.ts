@@ -12,10 +12,11 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClaudeAttribution, StopWithoutStartInfo, normalizeFsPath } from './claudeAttribution';
 import { ClaudeHookSource } from './claudeHookSource';
-import { applyClaudeAttributionHooks } from './claudeHookInstaller';
+import { applyClaudeAttributionHooks, getClaudeSettingsPath } from './claudeHookInstaller';
 import type { EditAttribution } from '../watcher/workspaceWatcher';
 
 const SECTION = 'claude-diff';
@@ -23,6 +24,8 @@ const MODE_KEY = 'editAttribution';
 const POLL_INTERVAL_MS = 2000;
 type Mode = 'allExternalWrites' | 'claudeCodeHooks';
 type RecoveryHandler = (match: (absPath: string, eventAt: number) => boolean) => Promise<number>;
+/** globalState: the user answered the one-time "only Claude's edits?" offer. */
+const OFFER_ANSWERED_KEY = 'claude-diff.claudeCodeHooksOfferAnswered';
 
 function getMode(): Mode {
   return vscode.workspace.getConfiguration(SECTION).get<Mode>(MODE_KEY, 'allExternalWrites');
@@ -34,6 +37,45 @@ function realpathOrSelf(p: string): string {
     return fs.realpathSync.native(p);
   } catch {
     return p;
+  }
+}
+
+/**
+ * Once per user, offer to switch from `allExternalWrites` (the default, which
+ * changes nothing outside VS Code) to `claudeCodeHooks`. The hooks go into the
+ * global ~/.claude/settings.json, so they are only installed with consent.
+ *
+ * Skipped when the user already chose a mode, and postponed while Claude Code
+ * isn't set up yet (no ~/.claude folder). Closing the notification counts as
+ * an answer; a notification left unanswered (VS Code closed first) asks again
+ * next time. Choosing Enable changes the setting, and the setting's change
+ * handler installs the hooks and explains the restart.
+ */
+export async function offerClaudeCodeHooks(context: vscode.ExtensionContext): Promise<void> {
+  if (context.globalState.get<boolean>(OFFER_ANSWERED_KEY)) { return; }
+
+  const inspected = vscode.workspace.getConfiguration(SECTION).inspect<Mode>(MODE_KEY);
+  if (inspected?.globalValue !== undefined ||
+      inspected?.workspaceValue !== undefined ||
+      inspected?.workspaceFolderValue !== undefined) {
+    await context.globalState.update(OFFER_ANSWERED_KEY, true);
+    return;
+  }
+  if (!fs.existsSync(path.dirname(getClaudeSettingsPath()))) { return; }
+
+  const enable = 'Enable';
+  const notNow = 'Not now';
+  const choice = await vscode.window.showInformationMessage(
+    'Diff Review for Claude Code opens a diff for every file written outside the editor, including by git, ' +
+    'formatters or files you copy in. Only open diffs for Claude\'s edits? This adds two hooks to ' +
+    '~/.claude/settings.json; you can change it later in Settings.',
+    enable,
+    notNow,
+  );
+  await context.globalState.update(OFFER_ANSWERED_KEY, true);
+  if (choice === enable) {
+    await vscode.workspace.getConfiguration(SECTION)
+      .update(MODE_KEY, 'claudeCodeHooks', vscode.ConfigurationTarget.Global);
   }
 }
 

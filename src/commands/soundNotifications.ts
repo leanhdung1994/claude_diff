@@ -10,6 +10,14 @@ import * as path from 'path';
  * giữ nguyên mọi hook khác user đã có sẵn.
  */
 
+const SOUND_MARKER = 'System.Media.SoundPlayer';
+/** Appended as a PowerShell comment, so only our sound hooks are ever removed. */
+const OWNER_MARKER = 'claude-diff';
+
+function isOurSoundCommand(command: unknown): boolean {
+  return typeof command === 'string' && command.includes(SOUND_MARKER) && command.includes(OWNER_MARKER);
+}
+
 function getClaudeSettingsPath(): string {
   const home = process.env['USERPROFILE'] ?? process.env['HOME'] ?? '';
   return path.join(home, '.claude', 'settings.json');
@@ -22,7 +30,7 @@ function soundHookEntry(wavPath: string): unknown {
         {
           type: 'command',
           shell: 'powershell',
-          command: `(New-Object System.Media.SoundPlayer '${wavPath}').PlaySync()`,
+          command: `(New-Object ${SOUND_MARKER} '${wavPath}').PlaySync() # ${OWNER_MARKER}`,
           async: true,
         },
       ],
@@ -53,7 +61,7 @@ export function applySoundNotifications(enabled: boolean): void {
   }
   // Turning sound off with no sound hook in the file: nothing to do, so don't
   // even parse the file.
-  if (!enabled && raw !== undefined && !raw.includes('System.Media.SoundPlayer')) {
+  if (!enabled && raw !== undefined && !(raw.includes(SOUND_MARKER) && raw.includes(OWNER_MARKER))) {
     return;
   }
   // Windows editors often save with a UTF-8 BOM, which JSON.parse rejects.
@@ -74,14 +82,12 @@ export function applySoundNotifications(enabled: boolean): void {
   const hooks = { ...(settings['hooks'] as Record<string, unknown> | undefined ?? {}) };
   const before = JSON.stringify(settings['hooks'] ?? {});
 
-  // Only add/remove OUR entries (identified by SoundPlayer in the command).
-  // Replacing the whole key used to wipe any other Notification/Stop hooks the
-  // user had configured.
+  // Only add/remove OUR entries (SoundPlayer + the owner marker in the
+  // command), never the user's own Notification/Stop hooks — including any
+  // SoundPlayer hooks they wrote themselves.
   const setOurs = (key: string, wavPath: string) => {
     const list = Array.isArray(hooks[key]) ? (hooks[key] as Array<{ hooks?: Array<{ command?: unknown }> }>) : [];
-    const others = list.filter(g => !(g.hooks ?? []).some(
-      h => typeof h.command === 'string' && h.command.includes('System.Media.SoundPlayer')
-    ));
+    const others = list.filter(g => !(g.hooks ?? []).some(h => isOurSoundCommand(h.command)));
     const next = enabled ? [...others, ...(soundHookEntry(wavPath) as unknown[])] : others;
     if (next.length > 0) { hooks[key] = next; } else { delete hooks[key]; }
   };

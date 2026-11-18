@@ -297,6 +297,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run clean && npm run compile",
+    "vscode:uninstall": "node ./out/uninstall.js",
     "test:attribution": "npm run compile && node scripts/test-attribution.js"
   },
   "dependencies": {

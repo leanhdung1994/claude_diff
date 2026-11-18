@@ -10,7 +10,7 @@ import { registerAllCommands } from './commands/commandsRegistry';
 import { applySoundNotifications } from './commands/soundNotifications';
 import { NavigationManager } from './diff/navigationManager';
 import { PendingFilesPanel } from './views/pendingFilesPanel';
-import { setupClaudeEditAttribution } from './attribution/setupClaudeAttribution';
+import { offerClaudeCodeHooks, setupClaudeEditAttribution } from './attribution/setupClaudeAttribution';
 
 const LOG_PREFIX = '[claude-diff]';
 
@@ -168,6 +168,9 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   updatePendingContext();
   debugLog('activate:complete');
+
+  // Not awaited: the notification can stay open for as long as the user likes.
+  void offerClaudeCodeHooks(context).catch((error: unknown) => debugError('claudeCodeHooks offer failed', error));
 }
 
 export function deactivate(): void {

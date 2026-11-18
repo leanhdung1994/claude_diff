@@ -61,12 +61,17 @@ The most useful:
 - `editAttribution` — `allExternalWrites` (default) opens a diff for every
   file written outside VS Code's editor, whoever wrote it; `claudeCodeHooks`
   only counts writes made during a Claude Code turn, so files you copy in, git
-  or a formatter don't open diffs.
+  or a formatter don't open diffs. It adds two hooks to `~/.claude/settings.json`,
+  so the extension asks once before turning it on; restart any running Claude
+  session afterwards so it loads the hooks.
 - `supportedFileExtensions`, `supportedFilenames`, `supportedFilenamePatterns` —
   extra files to review.
 - `maxFileLines` — skip very large files (default 5000).
 - `soundNotificationsEnabled` — play a sound when Claude finishes or needs input
   (Windows).
+
+Uninstalling the extension removes its hooks from `~/.claude/settings.json` and
+its `~/.claude-diff` folder the next time VS Code restarts.
 
 To see whole files instead of only the changed lines, turn off
 `diffEditor.hideUnchangedRegions.enabled`. To see the diff inline rather than

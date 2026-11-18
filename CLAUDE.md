@@ -68,11 +68,16 @@ Claude's edits are detected through the workspace watcher. By default (`editAttr
 - **Why turns, not per-edit events:** the watcher overwrites its baseline *before* asking the gate, so a write wrongly judged "not Claude's" loses its before-image. Claude Code waits for `UserPromptSubmit` before Claude starts, so the turn is always on record by the time the watcher decides (~200 ms after the write), even when the change notice is late.
 - **Recovery:** `WorkspaceWatcher` keeps the before-image of every ignored write (`ignoredWrites`). If a `Stop` arrives for a session with no open turn (its turn-start hook failed), `setupClaudeAttribution.ts` asks the watcher to open diffs for that session's ignored writes since its previous `Stop`. `ClaudeHookSource` polls the events folder every 2 s while the mode is on so this happens when the turn ends; its reads are serialized (overlapping reads would ingest one `Stop` twice) and it catches up on the last 30 min of events at startup.
 - **Assumptions:** nothing but Claude writes workspace files during a Claude turn, and turns are not interrupted with Esc (no `Stop` fires; the turn stays open until the next message or 3 h).
+- **Opt-in prompt:** `offerClaudeCodeHooks` (called at the end of activation) asks once per user whether to switch to this mode, because it edits the global `~/.claude/settings.json`. It is skipped if the user already set `editAttribution`, and postponed while `~/.claude` doesn't exist. Any answer (Enable, Not now, closing the notification) is recorded in `globalState` (`claude-diff.claudeCodeHooksOfferAnswered`); Enable only updates the user setting, and the setting's change handler installs the hooks.
 - Tests: `npm run test:attribution` (compiles, then runs `scripts/test-attribution.js`, including the real hook command).
 
 ### Sound notifications (unrelated to diff detection)
 
-`src/commands/soundNotifications.ts` (`applySoundNotifications`) writes or removes `Notification`/`Stop` hook entries in `~/.claude/settings.json` (Windows only, via PowerShell `SoundPlayer`). `extension.ts` calls it whenever `claude-diff.soundNotificationsEnabled` changes. It only ever touches its own entries under those two keys, preserving any other hooks already present in the file.
+`src/commands/soundNotifications.ts` (`applySoundNotifications`) writes or removes `Notification`/`Stop` hook entries in `~/.claude/settings.json` (Windows only, via PowerShell `SoundPlayer`). `extension.ts` calls it whenever `claude-diff.soundNotificationsEnabled` changes. It only ever touches its own entries under those two keys — commands containing both `System.Media.SoundPlayer` and the trailing `# claude-diff` PowerShell comment — preserving any other hooks already present in the file, including the user's own SoundPlayer hooks.
+
+### Uninstall cleanup
+
+`src/uninstall.ts` runs through the `vscode:uninstall` script after the extension is fully uninstalled (on the next VS Code restart), in plain Node — it must not import anything that imports `vscode`. It removes the attribution hooks, the sound hooks and `~/.claude-diff/`, and keeps the `settings.json.claude-diff.bak` backup.
 
 ### Git branch watcher
 
