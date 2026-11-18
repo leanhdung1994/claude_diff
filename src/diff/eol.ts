@@ -5,8 +5,8 @@
  *
  * `\r` là thuộc tính của file, không phải nội dung của dòng — nhưng
  * `split('\n')` để nó dính lại đuôi mỗi dòng, khiến `'abc\r' !== 'abc'` ở 100%
- * số dòng khi hai vế so sánh lệch EOL. Đó là nguyên nhân của bug #15 (diff nhỏ
- * mà hiển thị thay cả file) — xem `docs/BUG_ISSUE_15_FULL_FILE_DIFF.md`.
+ * số dòng khi hai vế so sánh lệch EOL — một thay đổi nhỏ khi đó hiển thị thành
+ * diff thay cả file.
  *
  * Nguyên tắc dùng: **LF ở giữa, EOL ở biên**. Mọi nội dung đi vào
  * `calculateHunks()` và sang webview đều đã qua `toLf()`; chỉ `fromLf()` lại

@@ -172,7 +172,7 @@ export function calculateHunks(
 ): Hunk[] {
   // Cắt dòng bằng /\r?\n/ chứ không phải '\n': với split('\n') thì `\r` của file
   // CRLF còn dính đuôi mỗi dòng, và khi hai vế lệch EOL thì 100% số dòng "khác
-  // nhau" -> diff phủ cả file (bug #15). Số phần tử mảng không đổi nên toàn bộ
+  // nhau" -> diff phủ cả file. Số phần tử mảng không đổi nên toàn bộ
   // logic chỉ số dòng bên dưới giữ nguyên; chỉ text trong hunk là không còn mang
   // ký tự EOL. Caller vẫn nên `toLf()` trước (xem eol.ts) — đây là lớp phòng thủ.
   const origLines = originalContent.split(/\r?\n/);

@@ -512,7 +512,7 @@ export class WorkspaceWatcher {
         // normalizeContent() bỏ qua EOL, nên nhánh này còn nuốt cả trường hợp
         // file chỉ đổi CRLF <-> LF. Phải refresh baseline raw trước khi thoát,
         // nếu không snapshot giữ EOL cũ vĩnh viễn và lần sửa 1 dòng kế tiếp sẽ
-        // bị so lệch EOL -> diff phủ cả file (bug #15).
+        // bị so lệch EOL -> diff phủ cả file.
         this.snapshots.set(absPath, newContentRaw);
         return;
       }

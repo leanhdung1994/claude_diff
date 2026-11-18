@@ -12,7 +12,7 @@
  * The hook must print NOTHING to stdout: for `UserPromptSubmit`, Claude Code
  * adds stdout to Claude's context.
  *
- * Rules learned from claudegate (docs/2026-07-06-hook-not-firing-in-running-session-bug.md):
+ * Rules for editing settings.json:
  *  - Only rewrite settings.json on a SEMANTIC change. Running Claude sessions
  *    may stop trusting hooks when the file changes underneath them.
  *  - Never reset a malformed settings.json — refuse to write instead.
