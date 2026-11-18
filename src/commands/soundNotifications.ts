@@ -51,8 +51,8 @@ export function applySoundNotifications(enabled: boolean): void {
   } catch {
     fileExists = false;
   }
-  // Turning sound off with no sound hook in the file: nothing to do. This runs
-  // on every Apply in the settings panel, so don't even parse the file.
+  // Turning sound off with no sound hook in the file: nothing to do, so don't
+  // even parse the file.
   if (!enabled && raw !== undefined && !raw.includes('System.Media.SoundPlayer')) {
     return;
   }

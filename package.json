@@ -33,19 +33,19 @@
     "commands": [
       {
         "command": "claude-diff.acceptFile",
-        "title": "Accept All Changes",
+        "title": "Accept File",
         "category": "Claude Diff",
         "icon": "$(check)"
       },
       {
         "command": "claude-diff.revertFile",
-        "title": "Revert All Changes",
+        "title": "Revert File",
         "category": "Claude Diff",
         "icon": "$(discard)"
       },
       {
         "command": "claude-diff.acceptAllChanges",
-        "title": "Accept All Changes (All Files)",
+        "title": "Accept All Files",
         "category": "Claude Diff",
         "icon": "$(check-all)"
       },
@@ -276,7 +276,7 @@
           "minimum": 2,
           "maximum": 500,
           "order": 14,
-          "description": "Advanced: number of distinct files changed within the window that counts as a burst."
+          "description": "Advanced: number of file-change events within the window that counts as a burst (repeated writes to one file each count)."
         },
         "claude-diff.burstDetectionHoldMs": {
           "type": "number",

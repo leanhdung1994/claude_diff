@@ -7,7 +7,7 @@
  * Lý do: file cực lớn hầu như luôn là code sinh tự động, bundle, lock file hay
  * dump dữ liệu — không phải thứ người ta ngồi review từng hunk. Đổi lại chúng
  * kéo theo chi phí lớn nhất ở mọi khâu: giữ baseline trong RAM, tính diff (Myers
- * là O((M+N)·D), nên xấu đi rất nhanh khi file to), và render trong webview.
+ * là O((M+N)·D), nên xấu đi rất nhanh khi file to), và hiển thị trong diff editor.
  *
  * File bị loại ở đây thì không có baseline, không mở diff — nó đơn giản không
  * nằm trong tầm ngắm của extension.
@@ -73,9 +73,4 @@ export function exceedsLineLimit(content: string): boolean {
   }
   const lines = content.endsWith('\n') ? newlines : newlines + 1;
   return lines > max;
-}
-
-/** Dùng cho log/thông báo. */
-export function currentMaxFileLines(): number {
-  return maxLines();
 }

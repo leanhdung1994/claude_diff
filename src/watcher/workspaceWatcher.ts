@@ -3,7 +3,7 @@
  *
  * Theo dõi file thay đổi trong workspace qua VS Code API.
  * Khi bất kỳ file nào được ghi (bởi Claude, hay bất kỳ tool nào),
- * extension sẽ tự động snapshot và hiện inline diff.
+ * extension sẽ tự động snapshot và mở tab diff.
  *
  * Flow:
  *   1. onDidSaveTextDocument → sync snapshot để FileSystemWatcher không trigger diff sai
@@ -679,12 +679,6 @@ export class WorkspaceWatcher {
         this.triggerDiff(filePath, w.originalContent, w.newContent, w.fileExistedBefore, true);
       }
     }, this.holdMs);
-  }
-
-
-  /** Cập nhật snapshot khi người dùng tự sửa file (để baseline luôn đúng) */
-  updateSnapshot(filePath: string, content: string): void {
-    this.snapshots.set(this.normalizePath(filePath), content);
   }
 
   dispose(): void {

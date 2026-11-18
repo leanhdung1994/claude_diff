@@ -17,7 +17,7 @@ npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
 ```
 
 - Press `F5` to launch the Extension Development Host (`.vscode/launch.json`), and reload the host after each recompile.
-- There is no lint, formatter, or test runner configured. `npm run compile` is the minimum correctness gate. Manually validate diff opening, accept/revert, and navigation in the Extension Development Host.
+- There is no lint, formatter, or general test runner configured. `npm run compile` is the minimum correctness gate; `npm run test:attribution` runs the only automated tests (Claude turn-window attribution). Manually validate diff opening, accept/revert, and navigation in the Extension Development Host.
 - `out/` is untracked and `tsc` never deletes files, so output from deleted modules lingers locally; `vscode:prepublish` runs `npm run clean` first so it is never packaged.
 - The only runtime dependency is `diff`. There are no webview bundles or native modules.
 - Strict TypeScript (`tsconfig.json`: `strict: true`, CommonJS, ES2020 target). 2-space indentation, semicolons, single quotes; `PascalCase` for classes/providers, `camelCase` for functions/variables, `kebab-case` for asset filenames.
@@ -53,7 +53,7 @@ The core responsibility: capture a before-image of a file, detect the after-imag
 
 Accept and revert are intentionally asymmetric: accepting just deletes the snapshot (the file on disk already holds the agent's version); reverting writes the snapshot back to disk (or deletes a file the agent created). After either, the next pending file's diff opens.
 
-### Two edit-detection pipelines
+### Edit detection
 
 Every CLI — including Claude — is detected through the workspace watcher. By default (`editAttribution = allExternalWrites`) every external write is treated as an agent edit. The opt-in Claude turn-window mode below only *filters* the watcher's writes; it is not a separate detection pipeline.
 
@@ -69,7 +69,7 @@ Every CLI — including Claude — is detected through the workspace watcher. By
 - **Why turns, not per-edit events:** the watcher overwrites its baseline *before* asking the gate, so a write wrongly judged "not Claude's" loses its before-image. Claude Code waits for `UserPromptSubmit` before Claude starts, so the turn is always on record by the time the watcher decides (~200 ms after the write), even when the change notice is late.
 - **Recovery:** `WorkspaceWatcher` keeps the before-image of every ignored write (`ignoredWrites`). If a `Stop` arrives for a session with no open turn (its turn-start hook failed), `setupClaudeAttribution.ts` asks the watcher to open diffs for that session's ignored writes since its previous `Stop`. `ClaudeHookSource` polls the events folder every 2 s while the mode is on so this happens when the turn ends; its reads are serialized (overlapping reads would ingest one `Stop` twice) and it catches up on the last 30 min of events at startup.
 - **Assumptions:** nothing but Claude writes workspace files during a Claude turn, and turns are not interrupted with Esc (no `Stop` fires; the turn stays open until the next message or 3 h).
-- Tests: `npm run compile && node scripts/test-attribution.js` (includes running the real hook command).
+- Tests: `npm run test:attribution` (compiles, then runs `scripts/test-attribution.js`, including the real hook command).
 
 ### Sound notifications (unrelated to diff detection)
 
@@ -82,10 +82,9 @@ Every CLI — including Claude — is detected through the workspace watcher. By
 ### UI composition
 
 - **Diff tabs** — VS Code's diff editor. Title-bar buttons (`editor/title`, shown when `claude-diff.activeIsPendingDiff`): previous file, next file, revert file, accept file.
-- **Pending Files view** — `src/views/pendingFilesPanel.ts` (`PendingFilesPanel`, view id `claude-diff.pendingFiles`) in the "Claude Diff" Activity Bar container. A webview tree of pending files with `+/−` counts from `DiffManager.getDiffPreviewMetadata()` (computed in the extension host; file contents never reach the webview), icons from `media/file-icons/`. It recounts on `onDidChangeDiffs` (a file became or stopped being pending) and, 250 ms after the last one, on `onDidChangePendingContent` — an already-pending file's content changed: `WorkspaceWatcher` calls `notifyPendingContentChanged()` when it skips a write to a pending file (no document event fires if no editor has it open), and `onDocumentSettled` fires it when a saved/reloaded pending file still differs from its snapshot. Clicking a file calls `openDiff`. View title buttons: Accept All (`acceptAllChanges`) and a gear (`openSettings`, opens Settings filtered to this extension).
+- **Pending Files view** — `src/views/pendingFilesPanel.ts` (`PendingFilesPanel`, view id `claude-diff.pendingFiles`) in the "Claude Diff" Activity Bar container. A webview tree of pending files with `+/−` counts from `DiffManager.getDiffPreviewMetadata()` (computed in the extension host; file contents never reach the webview), icons from `media/file-icons/`. It recounts on `onDidChangeDiffs` (a file became or stopped being pending) and, 250 ms after the last one, on `onDidChangePendingContent` — an already-pending file's content changed: `WorkspaceWatcher` calls `notifyPendingContentChanged()` when it skips a write to a pending file (no document event fires if no editor has it open), and `onDocumentSettled` fires it when a saved/reloaded pending file still differs from its snapshot. Clicking a file calls `openDiff`. View title buttons: Accept All Files (`acceptAllChanges`) and a gear (`openSettings`, opens Settings filtered to this extension).
 
 Pending-file navigation lives in `src/diff/navigationManager.ts`, reachable via the `prevFile`/`nextFile` commands, their `Alt+H`/`Alt+L` keybindings and the diff title-bar buttons. `updatePendingContext` in `extension.ts` keeps two context keys in sync via `DiffManager.onDidChangeDiffs` and tab-change events: `claude-diff.hasPendingDiff` (any pending file) and `claude-diff.activeIsPendingDiff` (the active tab is a pending diff).
-
 
 ### Configurable text-file detection
 
@@ -110,7 +109,7 @@ Pending-file navigation lives in `src/diff/navigationManager.ts`, reachable via 
 | `claude-diff.baselineScanConcurrency` | Advanced: maximum number of files read concurrently during the initial baseline scan (default 4, range 1–16). Lower it for large or remote workspaces to reduce I/O and memory pressure. |
 | `claude-diff.burstDetectionEnabled` | Advanced: hold files beyond the burst threshold to confirm a git branch change before opening their diff, instead of opening immediately (see "Workspace watcher" above) |
 | `claude-diff.burstDetectionWindowMs` | Advanced: sliding window (ms) used to count file changes for burst detection (default 300) |
-| `claude-diff.burstDetectionThreshold` | Advanced: number of distinct files changed within the window that counts as a burst (default 8) |
+| `claude-diff.burstDetectionThreshold` | Advanced: number of file-change events within the window that counts as a burst (default 8). `WriteBurstMeter.record()` counts every raw watcher event, so repeated writes to one file each count |
 | `claude-diff.burstDetectionHoldMs` | Advanced: how long (ms) to hold burst-threshold-exceeding files before opening their diff if no git branch change is confirmed (default 2000) |
 | `claude-diff.soundNotificationsEnabled` | Play a sound when Claude finishes a turn or needs input (Windows only, default off) — unrelated to diff detection |
 

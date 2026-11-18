@@ -47,7 +47,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         return;
       }
       await diffManager.accept(filePath);
-      vscode.window.showInformationMessage(`Accepted all changes: ${path.basename(filePath)}`);
+      vscode.window.showInformationMessage(`Accepted ${path.basename(filePath)}`);
     })
   );
 
@@ -58,7 +58,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         vscode.window.showWarningMessage('No pending changes to accept.');
         return;
       }
-      vscode.window.showInformationMessage(`Accepted all changes in ${total} file(s).`);
+      vscode.window.showInformationMessage(`Accepted ${total} file(s).`);
     })
   );
 
@@ -70,7 +70,7 @@ export function registerAllCommands(deps: CommandDeps): void {
         return;
       }
       await diffManager.revert(filePath);
-      vscode.window.showInformationMessage(`Reverted all changes: ${path.basename(filePath)}`);
+      vscode.window.showInformationMessage(`Reverted ${path.basename(filePath)}`);
     })
   );
 

@@ -7,8 +7,6 @@ Works with any AI CLI tool out of the box: no setup, no hooks required. Edits
 are picked up from the file system, so it doesn't matter whether the agent runs
 in the Claude Code extension, VS Code's terminal or an external one.
 
-![Welcome to Claude Diff](media/introduce/welcome.png)
-
 ## Features
 
 - **Automatic diffs.** When an agent writes a file, its diff opens in VS Code's
@@ -37,14 +35,13 @@ in the Claude Code extension, VS Code's terminal or an external one.
 2. Each edited file opens as a diff tab titled `<file> (AI changes)`.
 3. Review it, then **Accept** or **Revert** from the title bar. The next pending
    file opens automatically.
-4. Use **Accept All** in the Pending Files view to accept everything at once.
+4. Use **Accept All Files** in the Pending Files view to accept everything at once.
 
 ## Commands
 
-- `Claude Diff: Accept All Changes` — accept the current file
-- `Claude Diff: Revert All Changes` — revert the current file
-- `Claude Diff: Accept All Changes (All Files)`
-- `Claude Diff: Open Pending File`
+- `Claude Diff: Accept File` — accept the file in the active diff
+- `Claude Diff: Revert File` — revert the file in the active diff
+- `Claude Diff: Accept All Files` — accept every pending file
 - `Claude Diff: Previous Edited File`
 - `Claude Diff: Next Edited File`
 - `Claude Diff: Open Settings`

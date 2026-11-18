@@ -27,10 +27,6 @@ export class BaselineStore {
     this.snapshots.set(this.normalizePath(filePath), content);
   }
 
-  has(filePath: string): boolean {
-    return this.snapshots.has(this.normalizePath(filePath));
-  }
-
   /** Trả về true nếu file đã có baseline hoặc đã được đánh dấu bỏ qua. */
   hasState(filePath: string): boolean {
     const key = this.normalizePath(filePath);
