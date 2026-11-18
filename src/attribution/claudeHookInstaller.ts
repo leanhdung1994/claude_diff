@@ -6,7 +6,7 @@
  * Claude turn (see claudeAttribution.ts).
  *
  * The hook itself is deliberately dumb: it copies Claude Code's hook stdin JSON
- * into one file under ~/.ai-cli-diff-view/claude-events/. No Python/Node needed;
+ * into one file under ~/.claude-diff/claude-events/. No Python/Node needed;
  * all parsing happens in the extension (claudeAttribution.ts).
  *
  * The hook must print NOTHING to stdout: for `UserPromptSubmit`, Claude Code
@@ -24,18 +24,14 @@ import * as os from 'os';
 import * as path from 'path';
 
 const EVENTS_MARKER = 'claude-events';
-const OWNER_MARKER = 'ai-cli-diff-view';
+const OWNER_MARKER = 'claude-diff';
 /** Generous: a slow PowerShell start must never lose a turn-start event. */
 const HOOK_TIMEOUT_S = 30;
-/**
- * Every hook event this extension has ever installed an entry for. Our entries
- * under any of them are removed when no longer wanted — this is what cleans up
- * the PreToolUse/PostToolUse entries of the earlier per-edit design on upgrade.
- */
-const OWNED_EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop'] as const;
+/** Hook events this extension installs an entry for. */
+const OWNED_EVENTS = ['UserPromptSubmit', 'Stop'] as const;
 
 export function getClaudeEventsDir(): string {
-  return path.join(os.homedir(), '.ai-cli-diff-view', EVENTS_MARKER);
+  return path.join(os.homedir(), '.claude-diff', EVENTS_MARKER);
 }
 
 export function getClaudeSettingsPath(): string {
@@ -176,7 +172,7 @@ export function applyClaudeAttributionHooks(enabled: boolean): HookApplyResult {
   try {
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
     if (raw) {
-      fs.writeFileSync(settingsPath + '.ai-cli-diff-view.bak', raw, 'utf8');
+      fs.writeFileSync(settingsPath + '.claude-diff.bak', raw, 'utf8');
     }
     fs.writeFileSync(settingsPath, result.content, 'utf8');
     if (enabled) {

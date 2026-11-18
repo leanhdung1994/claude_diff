@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Extension Does
 
-AI CLI diff view is a VS Code extension for reviewing AI CLI file edits inside VS Code.
+Diff Review for Claude Code is a VS Code extension for reviewing AI CLI file edits inside VS Code.
 Best supported review workflows: Claude, Codex, and Qwen — all detected uniformly via the workspace watcher (no CLI-specific hooks required). The extension does not launch or host any agent itself; the agent runs wherever the user likes (Claude Code extension, a terminal, …).
 
 ## Commands
@@ -26,18 +26,18 @@ npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
 
 ### Runtime shape
 
-`src/extension.ts` is the entry point, activated `onStartupFinished` (and `onFileSystem:ai-cli-diff-original`, see below). It wires together the `DiffManager`, the snapshot content provider, the workspace and git-branch watchers, the navigation manager and the Pending Files view, then registers commands.
+`src/extension.ts` is the entry point, activated `onStartupFinished` (and `onFileSystem:claude-diff-original`, see below). It wires together the `DiffManager`, the snapshot content provider, the workspace and git-branch watchers, the navigation manager and the Pending Files view, then registers commands.
 
 The core responsibility: capture a before-image of a file, detect the after-image once an AI tool writes it, then show it in VS Code's built-in diff editor while keeping enough per-file state to accept or revert the whole file.
 
 ### Diff rendering — VS Code's built-in diff editor
 
 - `DiffManager.openDiff` calls `vscode.diff(left, right, '<name> (AI changes)')`. The **right/modified side** is the real file (`file:` URI), so editing, saving, undo, language features and keybindings are VS Code's own.
-- The **left/original side** is a read-only virtual document on the `ai-cli-diff-original:` scheme (`src/diff/snapshotUri.ts`). The URI is the file URI with only the scheme swapped, so it keeps the file name and language. `SnapshotContentProvider` (`src/diff/snapshotContentProvider.ts`) serves `DiffManager.getSnapshot(uri.fsPath)` and fires `onDidChange` for every open snapshot document on each `onDidChangeDiffs`.
+- The **left/original side** is a read-only virtual document on the `claude-diff-original:` scheme (`src/diff/snapshotUri.ts`). The URI is the file URI with only the scheme swapped, so it keeps the file name and language. `SnapshotContentProvider` (`src/diff/snapshotContentProvider.ts`) serves `DiffManager.getSnapshot(uri.fsPath)` and fires `onDidChange` for every open snapshot document on each `onDidChangeDiffs`.
 - Unchanged lines are collapsed through `contributes.configurationDefaults` → `diffEditor.hideUnchangedRegions.enabled: true`. That, inline vs side-by-side (`diffEditor.renderSideBySide`) and every other diff option are global user settings — there is no per-editor API.
 - There is **no per-hunk accept/reject** (by design). Accept/revert work on whole files. The diff editor's own "revert block" arrows still work: they edit the right side, and once the user saves content equal to the snapshot, `DiffManager.onDocumentSettled` drops the pending entry like an accept. Because the agent can trigger this too (writing a file back to its original while you work elsewhere), it never moves focus: a diff that is the visible tab of its group is replaced in place by the plain file with `preserveFocus`, and a background diff tab is just closed.
 - Diff tabs are recognised with `isPendingDiffInput()` — a `TabInputTextDiff` whose `original.scheme` is the snapshot scheme. There is no panel registry; `findDiffTabs` / `closeDiffTabs` scan `vscode.window.tabGroups`.
-- Diff tabs survive a window reload. The `onFileSystem:ai-cli-diff-original` activation event lets VS Code activate the extension to resolve a restored left side; the provider is registered synchronously at the top of `activateExtension`, and `closeStaleDiffTabs()` closes restored tabs whose snapshot is gone. `DiffManager.dispose()` therefore never closes tabs.
+- Diff tabs survive a window reload. The `onFileSystem:claude-diff-original` activation event lets VS Code activate the extension to resolve a restored left side; the provider is registered synchronously at the top of `activateExtension`, and `closeStaleDiffTabs()` closes restored tabs whose snapshot is gone. `DiffManager.dispose()` therefore never closes tabs.
 - Accept/revert/clearAll/acceptAllPending **open the plain text editor first, then close the diff tab** (`reopenAsTextEditor` → `closeDiffTabs`). Closing the last editor of a document with unsaved edits would otherwise prompt save/discard. `captureViewState()` records the diff tab's editor group (so with split editors the plain editor replaces the diff in its own group, even when its title-bar button was clicked in an inactive group) and the cursor/scroll of the visible `file:` editor for that path in that group, i.e. the diff's right side.
 - `extension.ts` auto-routes tabs: if a pending file is opened as a plain text editor, that tab is closed and reopened as its diff (`autoRouteTab`). A file whose snapshot was just removed is not rerouted, which is what lets `reopenAsTextEditor` work.
 - `hunkCalculator.ts` (Myers via the `diff` library, compared on LF-normalised text) is still used to decide whether a file has any change at all (`openDiff` drops pure-EOL changes) and for the `+/−/hunks` counts in Pending Files. Its pass 3 (`splitAlignedLines`) and `groupId` were built for the removed Monaco renderer; the hunk count shown is the number of split sub-hunks.
@@ -47,7 +47,7 @@ The core responsibility: capture a before-image of a file, detect the after-imag
 `src/diff/diffManager.ts` is the center of the extension. It owns:
 
 - the original-content snapshot map (left side of each diff), keyed by normalised path
-- persistence via `src/diff/snapshotStore.ts` in workspace state under `ai-cli-diff.snapshots` (survives VS Code restarts)
+- persistence via `src/diff/snapshotStore.ts` in workspace state under `claude-diff.snapshots` (survives VS Code restarts)
 - the public `openDiff` / `accept` / `revert` / `acceptAllPending` / `clearAll` operations used by commands, the watchers and the Pending Files view
 - the "edited back to original" cleanup (`onDocumentSettled`, only on saved / non-dirty content, skipped for paths in `resolving` so `revert()`'s own save doesn't trigger it)
 
@@ -63,7 +63,7 @@ Every CLI — including Claude — is detected through the workspace watcher. By
 
 ### Claude turn-window attribution (opt-in, `editAttribution = claudeCodeHooks`)
 
-`src/attribution/` decides whether an external write was Claude's, so files you copy in, git, formatters etc. don't open diffs. `claudeHookInstaller.ts` adds one `UserPromptSubmit` and one `Stop` hook to `~/.claude/settings.json` (timeout 30 s; the hook copies its stdin JSON into `~/.ai-cli-diff-view/claude-events/` and must print nothing, because `UserPromptSubmit` stdout reaches Claude's context). It owns only entries whose command contains both `ai-cli-diff-view` and `claude-events`, and also removes such entries under `PreToolUse`/`PostToolUse` left by the earlier per-edit design.
+`src/attribution/` decides whether an external write was Claude's, so files you copy in, git, formatters etc. don't open diffs. `claudeHookInstaller.ts` adds one `UserPromptSubmit` and one `Stop` hook to `~/.claude/settings.json` (timeout 30 s; the hook copies its stdin JSON into `~/.claude-diff/claude-events/` and must print nothing, because `UserPromptSubmit` stdout reaches Claude's context). It owns only entries whose command contains both `claude-diff` and `claude-events`.
 
 - **Rule** (`claudeAttribution.ts`, no `vscode` import): a write is Claude's if `turn.start ≤ writeAt ≤ (turn.end ?? start + 3 h) + 10 s` for a turn whose `cwd` is the same as, inside, or a parent of the file's workspace folder (both sides realpath'd, so a mapped drive matches its UNC path). A new `UserPromptSubmit` closes the session's previous open turn.
 - **Why turns, not per-edit events:** the watcher overwrites its baseline *before* asking the gate, so a write wrongly judged "not Claude's" loses its before-image. Claude Code waits for `UserPromptSubmit` before Claude starts, so the turn is always on record by the time the watcher decides (~200 ms after the write), even when the change notice is late.
@@ -73,7 +73,7 @@ Every CLI — including Claude — is detected through the workspace watcher. By
 
 ### Sound notifications (unrelated to diff detection)
 
-`src/commands/soundNotifications.ts` (`applySoundNotifications`) writes or removes `Notification`/`Stop` hook entries in `~/.claude/settings.json` (Windows only, via PowerShell `SoundPlayer`). `extension.ts` calls it whenever `ai-cli-diff-view.soundNotificationsEnabled` changes. It only ever touches its own entries under those two keys, preserving any other hooks already present in the file.
+`src/commands/soundNotifications.ts` (`applySoundNotifications`) writes or removes `Notification`/`Stop` hook entries in `~/.claude/settings.json` (Windows only, via PowerShell `SoundPlayer`). `extension.ts` calls it whenever `claude-diff.soundNotificationsEnabled` changes. It only ever touches its own entries under those two keys, preserving any other hooks already present in the file.
 
 ### Git branch watcher
 
@@ -81,12 +81,11 @@ Every CLI — including Claude — is detected through the workspace watcher. By
 
 ### UI composition
 
-- **Diff tabs** — VS Code's diff editor. Title-bar buttons (`editor/title`, shown when `ai-cli-diff-view.activeIsPendingDiff`): previous file, next file, revert file, accept file.
-- **Pending Files view** — `src/views/pendingFilesPanel.ts` (`PendingFilesPanel`, view id `ai-cli-diff-view.pendingFiles`) in the "AI CLI Diff" Activity Bar container. A webview tree of pending files with `+/−` counts from `DiffManager.getDiffPreviewMetadata()` (computed in the extension host; file contents never reach the webview), icons from `media/file-icons/`. It recounts on `onDidChangeDiffs` (a file became or stopped being pending) and, 250 ms after the last one, on `onDidChangePendingContent` — an already-pending file's content changed: `WorkspaceWatcher` calls `notifyPendingContentChanged()` when it skips a write to a pending file (no document event fires if no editor has it open), and `onDocumentSettled` fires it when a saved/reloaded pending file still differs from its snapshot. Clicking a file calls `openDiff`. View title buttons: Accept All (`acceptAllChanges`) and a gear (`openSettings`, opens Settings filtered to this extension).
+- **Diff tabs** — VS Code's diff editor. Title-bar buttons (`editor/title`, shown when `claude-diff.activeIsPendingDiff`): previous file, next file, revert file, accept file.
+- **Pending Files view** — `src/views/pendingFilesPanel.ts` (`PendingFilesPanel`, view id `claude-diff.pendingFiles`) in the "Claude Diff" Activity Bar container. A webview tree of pending files with `+/−` counts from `DiffManager.getDiffPreviewMetadata()` (computed in the extension host; file contents never reach the webview), icons from `media/file-icons/`. It recounts on `onDidChangeDiffs` (a file became or stopped being pending) and, 250 ms after the last one, on `onDidChangePendingContent` — an already-pending file's content changed: `WorkspaceWatcher` calls `notifyPendingContentChanged()` when it skips a write to a pending file (no document event fires if no editor has it open), and `onDocumentSettled` fires it when a saved/reloaded pending file still differs from its snapshot. Clicking a file calls `openDiff`. View title buttons: Accept All (`acceptAllChanges`) and a gear (`openSettings`, opens Settings filtered to this extension).
 
-Pending-file navigation lives in `src/diff/navigationManager.ts`, reachable via the `prevFile`/`nextFile` commands, their `Alt+H`/`Alt+L` keybindings and the diff title-bar buttons. `updatePendingContext` in `extension.ts` keeps two context keys in sync via `DiffManager.onDidChangeDiffs` and tab-change events: `ai-cli-diff-view.hasPendingDiff` (any pending file) and `ai-cli-diff-view.activeIsPendingDiff` (the active tab is a pending diff).
+Pending-file navigation lives in `src/diff/navigationManager.ts`, reachable via the `prevFile`/`nextFile` commands, their `Alt+H`/`Alt+L` keybindings and the diff title-bar buttons. `updatePendingContext` in `extension.ts` keeps two context keys in sync via `DiffManager.onDidChangeDiffs` and tab-change events: `claude-diff.hasPendingDiff` (any pending file) and `claude-diff.activeIsPendingDiff` (the active tab is a pending diff).
 
-On startup, `restoreLegacyAgentModeTabs` restores a `workbench.editor.showTabs` value stored by the removed Agent mode, in case a window was closed while it was on.
 
 ### Configurable text-file detection
 
@@ -102,18 +101,18 @@ On startup, `restoreLegacyAgentModeTabs` restores a `workbench.editor.showTabs` 
 
 | Setting | Purpose |
 | --- | --- |
-| `ai-cli-diff-view.editAttribution` | `allExternalWrites` (default: every external write is an agent edit) or `claudeCodeHooks` (Claude turn-window attribution; installs hooks in `~/.claude/settings.json`) |
-| `ai-cli-diff-view.supportedFileDetectionMode` | `defaultAndCustom` (default) or `customOnly` |
-| `ai-cli-diff-view.supportedFileExtensions` | Extra extensions to treat as text (dot optional) |
-| `ai-cli-diff-view.supportedFilenames` | Extra exact filenames to treat as text |
-| `ai-cli-diff-view.supportedFilenamePatterns` | Extra basename globs (`*`, `?`) to treat as text |
-| `ai-cli-diff-view.maxFileLines` | Advanced: ignore files above this many lines — no baseline, no diff (default 5000; `0` disables). Enforced in `src/watcher/fileSizeLimit.ts`, applied by `baselineScanner` and both write paths in `workspaceWatcher`. Skipped files are recorded in `BaselineStore.sizeSkipped` so that one later dropping below the limit is not mistaken for a brand-new file (which would make Revert delete it) |
-| `ai-cli-diff-view.baselineScanConcurrency` | Advanced: maximum number of files read concurrently during the initial baseline scan (default 4, range 1–16). Lower it for large or remote workspaces to reduce I/O and memory pressure. |
-| `ai-cli-diff-view.burstDetectionEnabled` | Advanced: hold files beyond the burst threshold to confirm a git branch change before opening their diff, instead of opening immediately (see `docs/GIT_VS_AI_EDIT_DETECTION.md`) |
-| `ai-cli-diff-view.burstDetectionWindowMs` | Advanced: sliding window (ms) used to count file changes for burst detection (default 300) |
-| `ai-cli-diff-view.burstDetectionThreshold` | Advanced: number of distinct files changed within the window that counts as a burst (default 8) |
-| `ai-cli-diff-view.burstDetectionHoldMs` | Advanced: how long (ms) to hold burst-threshold-exceeding files before opening their diff if no git branch change is confirmed (default 2000) |
-| `ai-cli-diff-view.soundNotificationsEnabled` | Play a sound when Claude finishes a turn or needs input (Windows only, default off) — unrelated to diff detection |
+| `claude-diff.editAttribution` | `allExternalWrites` (default: every external write is an agent edit) or `claudeCodeHooks` (Claude turn-window attribution; installs hooks in `~/.claude/settings.json`) |
+| `claude-diff.supportedFileDetectionMode` | `defaultAndCustom` (default) or `customOnly` |
+| `claude-diff.supportedFileExtensions` | Extra extensions to treat as text (dot optional) |
+| `claude-diff.supportedFilenames` | Extra exact filenames to treat as text |
+| `claude-diff.supportedFilenamePatterns` | Extra basename globs (`*`, `?`) to treat as text |
+| `claude-diff.maxFileLines` | Advanced: ignore files above this many lines — no baseline, no diff (default 5000; `0` disables). Enforced in `src/watcher/fileSizeLimit.ts`, applied by `baselineScanner` and both write paths in `workspaceWatcher`. Skipped files are recorded in `BaselineStore.sizeSkipped` so that one later dropping below the limit is not mistaken for a brand-new file (which would make Revert delete it) |
+| `claude-diff.baselineScanConcurrency` | Advanced: maximum number of files read concurrently during the initial baseline scan (default 4, range 1–16). Lower it for large or remote workspaces to reduce I/O and memory pressure. |
+| `claude-diff.burstDetectionEnabled` | Advanced: hold files beyond the burst threshold to confirm a git branch change before opening their diff, instead of opening immediately (see `docs/GIT_VS_AI_EDIT_DETECTION.md`) |
+| `claude-diff.burstDetectionWindowMs` | Advanced: sliding window (ms) used to count file changes for burst detection (default 300) |
+| `claude-diff.burstDetectionThreshold` | Advanced: number of distinct files changed within the window that counts as a burst (default 8) |
+| `claude-diff.burstDetectionHoldMs` | Advanced: how long (ms) to hold burst-threshold-exceeding files before opening their diff if no git branch change is confirmed (default 2000) |
+| `claude-diff.soundNotificationsEnabled` | Play a sound when Claude finishes a turn or needs input (Windows only, default off) — unrelated to diff detection |
 
 All of these are edited in VS Code's Settings UI (the Pending Files gear opens it filtered to this extension). `contributes.configurationDefaults` also sets `diffEditor.hideUnchangedRegions.enabled` to `true`. `.git/index`-based early confirmation is a known gap — the burst hold relies solely on `GitBranchWatcher`'s existing `HEAD`-change confirmation (see `docs/GIT_VS_AI_EDIT_DETECTION.md`).
 
@@ -121,12 +120,12 @@ All of these are edited in VS Code's Settings UI (the Pending Files gear opens i
 
 | Command | Keybinding | Purpose |
 | --- | --- | --- |
-| `ai-cli-diff-view.acceptAllHunks` | `Ctrl+Shift+Y` (when `activeIsPendingDiff`) | Accept the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
-| `ai-cli-diff-view.revertAllHunks` | `Ctrl+Shift+Z` (when `activeIsPendingDiff`) | Revert the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
-| `ai-cli-diff-view.acceptAllChanges` | — | Accept all pending changes across files |
-| `ai-cli-diff-view.openPendingFile` | — | Open a pending file's diff (takes a path arg) |
-| `ai-cli-diff-view.openSettings` | — | Open Settings filtered to this extension |
-| `ai-cli-diff-view.prevFile` | `Alt+H` (when `hasPendingDiff`) | Go to previous pending file |
-| `ai-cli-diff-view.nextFile` | `Alt+L` (when `hasPendingDiff`) | Go to next pending file |
+| `claude-diff.acceptAllHunks` | `Ctrl+Shift+Y` (when `activeIsPendingDiff`) | Accept the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
+| `claude-diff.revertAllHunks` | `Ctrl+Shift+Z` (when `activeIsPendingDiff`) | Revert the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
+| `claude-diff.acceptAllChanges` | — | Accept all pending changes across files |
+| `claude-diff.openPendingFile` | — | Open a pending file's diff (takes a path arg) |
+| `claude-diff.openSettings` | — | Open Settings filtered to this extension |
+| `claude-diff.prevFile` | `Alt+H` (when `hasPendingDiff`) | Go to previous pending file |
+| `claude-diff.nextFile` | `Alt+L` (when `hasPendingDiff`) | Go to next pending file |
 
 The `acceptAllHunks` / `revertAllHunks` ids are historical; they act on the whole file.

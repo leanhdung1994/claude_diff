@@ -39,7 +39,7 @@ import * as vscode from 'vscode';
 import { DiffManager } from '../diff/diffManager';
 import { WorkspaceWatcher } from './workspaceWatcher';
 
-const STORED_HEAD_KEY = 'ai-cli-diff.lastHeadByFolder';
+const STORED_HEAD_KEY = 'claude-diff.lastHeadByFolder';
 
 /** Nhãn hành động reflog coi là git batch-op cùng branch cần xác nhận (xem comment đầu file). */
 const REFLOG_CONFIRM_ACTION = /^(pull|merge|rebase|reset)\b/i;

@@ -125,10 +125,10 @@ export class WorkspaceWatcher {
     this.watchWorkspaceFolders();
     this.applyBurstConfig();
     const d = vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('ai-cli-diff-view.burstDetectionEnabled') ||
-          e.affectsConfiguration('ai-cli-diff-view.burstDetectionWindowMs') ||
-          e.affectsConfiguration('ai-cli-diff-view.burstDetectionThreshold') ||
-          e.affectsConfiguration('ai-cli-diff-view.burstDetectionHoldMs')) {
+      if (e.affectsConfiguration('claude-diff.burstDetectionEnabled') ||
+          e.affectsConfiguration('claude-diff.burstDetectionWindowMs') ||
+          e.affectsConfiguration('claude-diff.burstDetectionThreshold') ||
+          e.affectsConfiguration('claude-diff.burstDetectionHoldMs')) {
         this.applyBurstConfig();
       }
     });
@@ -137,13 +137,13 @@ export class WorkspaceWatcher {
 
   private applyBurstConfig(): void {
     this.burstMeter.updateConfig(this.loadBurstMeterConfig());
-    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    const config = vscode.workspace.getConfiguration('claude-diff');
     const holdMs = config.get<number>('burstDetectionHoldMs', 2000);
     this.holdMs = Number.isFinite(holdMs) ? Math.min(10000, Math.max(500, holdMs)) : 2000;
   }
 
   private loadBurstMeterConfig(): BurstMeterConfig {
-    const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+    const config = vscode.workspace.getConfiguration('claude-diff');
     const windowMs = config.get<number>('burstDetectionWindowMs', 300);
     const threshold = config.get<number>('burstDetectionThreshold', 8);
     return {
@@ -281,7 +281,7 @@ export class WorkspaceWatcher {
     try {
       await this.baselineScanner.buildInitialSnapshots(folderPath);
     } catch (err) {
-      console.error('[ai-cli-diff-view] workspaceWatcher buildInitialSnapshots error:', err);
+      console.error('[claude-diff] workspaceWatcher buildInitialSnapshots error:', err);
     } finally {
       this.baselineScansInProgress--;
       if (this.baselineScansInProgress === 0) {
@@ -613,7 +613,7 @@ export class WorkspaceWatcher {
     this.ignoredWrites.delete(filePath);
     this.diffManager.loadSnapshot(filePath, originalContent, fileExistedBefore);
     this.diffManager.openDiff(filePath, fromBurstDump ? { preserveFocus: true } : undefined).catch((err: unknown) => {
-      console.error('[ai-cli-diff-view] workspaceWatcher openDiff failed:', err);
+      console.error('[claude-diff] workspaceWatcher openDiff failed:', err);
     });
   }
 

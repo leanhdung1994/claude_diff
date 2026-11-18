@@ -21,7 +21,7 @@ interface PendingFile {
  * independently of Git decorations. Clicking a file opens its diff.
  */
 export class PendingFilesPanel implements vscode.WebviewViewProvider, vscode.Disposable {
-  public static readonly viewType = 'ai-cli-diff-view.pendingFiles';
+  public static readonly viewType = 'claude-diff.pendingFiles';
 
   /** Coalesces a burst of writes to pending files into one recount. */
   private static readonly CONTENT_REFRESH_DELAY_MS = 250;

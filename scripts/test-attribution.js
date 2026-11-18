@@ -139,30 +139,12 @@ console.log('settings.json installer');
   const r3 = JSON.parse(I.computeHookSettings(r1.content, false, 'linux').content);
   ok(JSON.stringify(r3) === JSON.stringify(user), 'uninstall restores exactly the original config');
 
-  // Upgrade from the per-edit design: our old PreToolUse/PostToolUse entries go.
-  const oldCmd = { type: 'command', timeout: 5,
-    command: 'd="$HOME/.ai-cli-diff-view/claude-events"; mkdir -p "$d" && cat > "$d/x.json"; exit 0' };
-  const oldMatcher = '^(Write|Edit|MultiEdit|NotebookEdit|Bash)$';
-  const old = JSON.parse(raw);
-  old.hooks.PreToolUse.push({ matcher: oldMatcher, hooks: [oldCmd] });
-  old.hooks.PostToolUse = [{ matcher: oldMatcher, hooks: [oldCmd] }];
-  old.hooks.Stop.push({ hooks: [oldCmd] });
-  const up = I.computeHookSettings(JSON.stringify(old, null, 2), true, 'linux');
-  const su = JSON.parse(up.content);
-  ok(up.changed && su.hooks.PreToolUse.length === 1 && su.hooks.PreToolUse[0].hooks[0].command === 'my-guard.sh',
-    'upgrade removes our old PreToolUse entry, keeps the user\'s');
-  ok(!su.hooks.PostToolUse, 'upgrade removes our old PostToolUse entry');
-  ok(su.hooks.Stop.length === 2 && su.hooks.Stop[1].hooks[0].timeout === 30, 'upgrade replaces our old Stop entry');
-  ok(su.hooks.UserPromptSubmit.length === 1, 'upgrade adds UserPromptSubmit');
-  ok(JSON.stringify(JSON.parse(I.computeHookSettings(JSON.stringify(old), false, 'linux').content)) === JSON.stringify(user),
-    'uninstall over the old version also restores the original config');
-
   ok(I.computeHookSettings('{ broken', true, 'linux').parseError, 'malformed settings.json → refuse to write');
   {
     const r = I.computeHookSettings('{ broken', false, 'linux');
     ok(!r.parseError && !r.changed, 'feature off + unparseable file without our hook → silent no-op (startup case)');
   }
-  ok(I.computeHookSettings('{ broken ' + 'ai-cli-diff-view/claude-events', false, 'linux').parseError,
+  ok(I.computeHookSettings('{ broken ' + 'claude-diff/claude-events', false, 'linux').parseError,
     'feature off + unparseable file that contains our hook → refuse to write');
   {
     const withBom = '\uFEFF' + raw;
@@ -192,7 +174,7 @@ console.log('settings.json installer');
     const stdout = cp.execSync(cmd, { input: Buffer.from(JSON.stringify(payload), 'utf8'),
       env: { ...process.env, [homeVar]: home }, shell });
     ok(stdout.length === 0, `${label}: hook prints nothing (UserPromptSubmit stdout would reach Claude's context)`);
-    const dir = path.join(home, '.ai-cli-diff-view', 'claude-events');
+    const dir = path.join(home, '.claude-diff', 'claude-events');
     const files = fs.readdirSync(dir);
     ok(files.length === 1 && files[0].endsWith('.json'), `${label}: hook wrote exactly one .json event file (no leftover .tmp)`);
     const stored = JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf8'));

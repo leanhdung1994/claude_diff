@@ -3,7 +3,7 @@
  *
  * Đo tốc độ ghi file thực tế để phân biệt batch operation (git checkout) với
  * AI tool edit — mô tả ở docs/GIT_VS_AI_EDIT_DETECTION.md. Ngưỡng/cửa sổ có
- * thể chỉnh qua settings `ai-cli-diff-view.burstDetection*` (VS Code
+ * thể chỉnh qua settings `claude-diff.burstDetection*` (VS Code
  * Settings, hoặc nút bánh răng trên view Pending Files).
  *
  * `record()` trả về quyết định (có vượt ngưỡng burst hay không) để
@@ -56,7 +56,7 @@ export class WriteBurstMeter {
       if (!this.burstActive) {
         this.burstActive = true;
         console.log(
-          `[ai-cli-diff burst-meter] ${count} file thay đổi trong ${this.config.windowMs}ms ` +
+          `[claude-diff burst-meter] ${count} file thay đổi trong ${this.config.windowMs}ms ` +
           `(>= ngưỡng ${this.config.threshold}) — gần nhất: ${filePath}`
         );
       }

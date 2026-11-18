@@ -15,7 +15,7 @@
 
 import * as vscode from 'vscode';
 
-/** Giá trị mặc định của `ai-cli-diff-view.maxFileLines`. 0 = không giới hạn. */
+/** Giá trị mặc định của `claude-diff.maxFileLines`. 0 = không giới hạn. */
 const DEFAULT_MAX_FILE_LINES = 5000;
 
 /**
@@ -32,7 +32,7 @@ const BYTES_PER_LINE_HEADROOM = 200;
 let cachedMaxLines: number | undefined;
 
 export function refreshFileSizeLimit(): void {
-  const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+  const config = vscode.workspace.getConfiguration('claude-diff');
   const value = config.get<number>('maxFileLines', DEFAULT_MAX_FILE_LINES);
   cachedMaxLines = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }

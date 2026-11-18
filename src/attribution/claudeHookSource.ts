@@ -2,7 +2,7 @@
  * claudeHookSource.ts
  *
  * Reads the event files the Claude Code hook drops into
- * ~/.ai-cli-diff-view/claude-events/ and feeds them to ClaudeAttribution.
+ * ~/.claude-diff/claude-events/ and feeds them to ClaudeAttribution.
  *
  * Read on demand: WorkspaceWatcher asks right before deciding about a write
  * (≥200ms after the FS event). The `UserPromptSubmit` hook ran before Claude

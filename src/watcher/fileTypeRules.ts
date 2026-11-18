@@ -111,7 +111,7 @@ export function isTextFile(filename: string): boolean {
 }
 
 export function refreshTextFileRules(): void {
-  const config = vscode.workspace.getConfiguration('ai-cli-diff-view');
+  const config = vscode.workspace.getConfiguration('claude-diff');
   const mode = config.get<FileDetectionMode>('supportedFileDetectionMode', 'defaultAndCustom');
   const customExts = normalizeExtensions(config.get<string[]>('supportedFileExtensions', []));
   const customFilenames = normalizeStrings(config.get<string[]>('supportedFilenames', []));

@@ -12,19 +12,7 @@ import { NavigationManager } from './diff/navigationManager';
 import { PendingFilesPanel } from './views/pendingFilesPanel';
 import { setupClaudeEditAttribution } from './attribution/setupClaudeAttribution';
 
-const LOG_PREFIX = '[ai-cli-diff-view]';
-
-/**
- * Left behind by the removed Agent mode, which temporarily set
- * `workbench.editor.showTabs` to `none` and stored the user's previous value
- * here. If a window was closed mid-Agent-mode, restore that value once.
- */
-const LEGACY_AGENT_MODE_TABS_STATE_KEY = 'ai-cli-diff-view.agentMode.editorTabsState';
-
-interface LegacyAgentModeTabsState {
-  target: vscode.ConfigurationTarget;
-  value: string | undefined;
-}
+const LOG_PREFIX = '[claude-diff]';
 
 let diagnosticChannel: vscode.OutputChannel | undefined;
 
@@ -42,7 +30,7 @@ function debugError(message: string, error?: unknown): void {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  diagnosticChannel = vscode.window.createOutputChannel('AI CLI Diff View');
+  diagnosticChannel = vscode.window.createOutputChannel('Diff Review for Claude Code');
   context.subscriptions.push(diagnosticChannel);
 
   try {
@@ -50,22 +38,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   } catch (error: unknown) {
     debugError('activate:failed', error);
     void vscode.window.showErrorMessage(
-      `AI CLI Diff View failed to activate: ${error instanceof Error ? error.message : String(error)}`
+      `Diff Review for Claude Code failed to activate: ${error instanceof Error ? error.message : String(error)}`
     );
     throw error;
   }
-}
-
-async function restoreLegacyAgentModeTabs(context: vscode.ExtensionContext): Promise<void> {
-  const stale = context.workspaceState.get<LegacyAgentModeTabsState>(LEGACY_AGENT_MODE_TABS_STATE_KEY);
-  if (!stale) { return; }
-  try {
-    await vscode.workspace.getConfiguration('workbench.editor').update('showTabs', stale.value, stale.target);
-    debugLog('legacy agent-mode editor tabs setting restored');
-  } catch (error: unknown) {
-    debugError('legacy agent-mode editor tabs restore failed', error);
-  }
-  await context.workspaceState.update(LEGACY_AGENT_MODE_TABS_STATE_KEY, undefined);
 }
 
 async function activateExtension(context: vscode.ExtensionContext): Promise<void> {
@@ -102,22 +78,20 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     { dispose: () => gitBranchWatcher.dispose() }
   );
 
-  await restoreLegacyAgentModeTabs(context);
-
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('ai-cli-diff-view.supportedFileDetectionMode') ||
-          e.affectsConfiguration('ai-cli-diff-view.supportedFileExtensions') ||
-          e.affectsConfiguration('ai-cli-diff-view.supportedFilenames') ||
-          e.affectsConfiguration('ai-cli-diff-view.supportedFilenamePatterns')) {
+      if (e.affectsConfiguration('claude-diff.supportedFileDetectionMode') ||
+          e.affectsConfiguration('claude-diff.supportedFileExtensions') ||
+          e.affectsConfiguration('claude-diff.supportedFilenames') ||
+          e.affectsConfiguration('claude-diff.supportedFilenamePatterns')) {
         refreshTextFileRules();
       }
-      if (e.affectsConfiguration('ai-cli-diff-view.maxFileLines')) {
+      if (e.affectsConfiguration('claude-diff.maxFileLines')) {
         refreshFileSizeLimit();
       }
-      if (e.affectsConfiguration('ai-cli-diff-view.soundNotificationsEnabled')) {
+      if (e.affectsConfiguration('claude-diff.soundNotificationsEnabled')) {
         const enabled = vscode.workspace
-          .getConfiguration('ai-cli-diff-view')
+          .getConfiguration('claude-diff')
           .get<boolean>('soundNotificationsEnabled', false);
         try {
           applySoundNotifications(enabled);
@@ -137,9 +111,9 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   debugLog('activate:standard commands registered');
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.nextFile', () => navigationManager.nextFile()),
-    vscode.commands.registerCommand('ai-cli-diff-view.prevFile', () => navigationManager.prevFile()),
-    vscode.commands.registerCommand('ai-cli-diff-view.openSettings', () => (
+    vscode.commands.registerCommand('claude-diff.nextFile', () => navigationManager.nextFile()),
+    vscode.commands.registerCommand('claude-diff.prevFile', () => navigationManager.prevFile()),
+    vscode.commands.registerCommand('claude-diff.openSettings', () => (
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
     )),
   );
@@ -148,9 +122,9 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     const hasPending = diffManager.getPendingFiles().length > 0;
     const activeDiff = diffManager.getActiveDiffPath();
     pendingFilesPanel.setActiveFile(activeDiff);
-    void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.hasPendingDiff', hasPending);
+    void vscode.commands.executeCommand('setContext', 'claude-diff.hasPendingDiff', hasPending);
     // Gates the diff tab's title-bar buttons and the Ctrl+Shift+Y/Z keybindings.
-    void vscode.commands.executeCommand('setContext', 'ai-cli-diff-view.activeIsPendingDiff', activeDiff !== undefined);
+    void vscode.commands.executeCommand('setContext', 'claude-diff.activeIsPendingDiff', activeDiff !== undefined);
   }
 
   context.subscriptions.push(
@@ -175,7 +149,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
         await vscode.window.tabGroups.close(tab);
         await diffManager.openDiff(fsPath);
       } catch (err) {
-        console.error('[ai-cli-diff] auto-route failed:', err);
+        console.error('[claude-diff] auto-route failed:', err);
       }
     })();
   };

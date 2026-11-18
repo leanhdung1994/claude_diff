@@ -2,7 +2,7 @@
  * snapshotContentProvider.ts
  *
  * Serves the before-image held by DiffManager as a read-only virtual document
- * (`ai-cli-diff-original:` URIs), used as the left side of VS Code's built-in
+ * (`claude-diff-original:` URIs), used as the left side of VS Code's built-in
  * diff editor. The right side is the real file.
  */
 

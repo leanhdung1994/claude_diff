@@ -45,7 +45,7 @@ export class BaselineScanner {
 
   private readConcurrency(): number {
     const configured = vscode.workspace
-      .getConfiguration('ai-cli-diff-view')
+      .getConfiguration('claude-diff')
       .get<number>('baselineScanConcurrency', BaselineScanner.DEFAULT_CONCURRENCY);
     if (!Number.isFinite(configured)) {
       return BaselineScanner.DEFAULT_CONCURRENCY;

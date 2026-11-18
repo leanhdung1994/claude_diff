@@ -25,7 +25,7 @@ export function registerAllCommands(deps: CommandDeps): void {
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.openPendingFile', async (filePath?: string) => {
+    vscode.commands.registerCommand('claude-diff.openPendingFile', async (filePath?: string) => {
       if (!filePath || typeof filePath !== 'string') {
         return;
       }
@@ -34,13 +34,13 @@ export function registerAllCommands(deps: CommandDeps): void {
         await diffManager.openDiff(filePath);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        vscode.window.showErrorMessage(`AI CLI Diff: could not open file - ${message}`);
+        vscode.window.showErrorMessage(`Claude Diff: could not open file - ${message}`);
       }
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.acceptAllHunks', async (arg?: unknown) => {
+    vscode.commands.registerCommand('claude-diff.acceptAllHunks', async (arg?: unknown) => {
       const filePath = getActiveDiffFilePath(arg);
       if (!filePath) {
         vscode.window.showWarningMessage('Open a pending diff first.');
@@ -52,7 +52,7 @@ export function registerAllCommands(deps: CommandDeps): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.acceptAllChanges', async () => {
+    vscode.commands.registerCommand('claude-diff.acceptAllChanges', async () => {
       const total = await diffManager.acceptAllPending();
       if (total === 0) {
         vscode.window.showWarningMessage('No pending changes to accept.');
@@ -63,7 +63,7 @@ export function registerAllCommands(deps: CommandDeps): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ai-cli-diff-view.revertAllHunks', async (arg?: unknown) => {
+    vscode.commands.registerCommand('claude-diff.revertAllHunks', async (arg?: unknown) => {
       const filePath = getActiveDiffFilePath(arg);
       if (!filePath) {
         vscode.window.showWarningMessage('Open a pending diff first.');

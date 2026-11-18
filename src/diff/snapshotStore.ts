@@ -2,14 +2,13 @@
  * snapshotStore.ts
  *
  * Persistence layer cho diff snapshots: đọc/ghi `context.workspaceState`
- * dưới key `ai-cli-diff.snapshots`, kèm xử lý backward-compat với shape
- * cũ (entry là string thay vì object).
+ * dưới key `claude-diff.snapshots`.
  */
 
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 
-const STATE_KEY = 'ai-cli-diff.snapshots';
+const STATE_KEY = 'claude-diff.snapshots';
 
 export interface SnapshotState {
   content: string;
@@ -23,7 +22,7 @@ export class SnapshotStore {
    * Đọc snapshot đã persist trước đó. Bỏ qua entry mà file không còn tồn tại.
    */
   load(): Map<string, SnapshotState> {
-    const saved = this.workspaceState.get<Record<string, string | SnapshotState>>(STATE_KEY, {});
+    const saved = this.workspaceState.get<Record<string, SnapshotState>>(STATE_KEY, {});
     const result = new Map<string, SnapshotState>();
     for (const [absPath, savedSnapshot] of Object.entries(saved)) {
       if (!fs.existsSync(absPath)) { continue; }
@@ -45,10 +44,7 @@ export class SnapshotStore {
   }
 }
 
-function normalizeSavedSnapshot(savedSnapshot: string | SnapshotState): SnapshotState {
-  if (typeof savedSnapshot === 'string') {
-    return { content: savedSnapshot, fileExistedBefore: true };
-  }
+function normalizeSavedSnapshot(savedSnapshot: SnapshotState): SnapshotState {
   return {
     content: savedSnapshot.content,
     fileExistedBefore: savedSnapshot.fileExistedBefore === false ? false : true,

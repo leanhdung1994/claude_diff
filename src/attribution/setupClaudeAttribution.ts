@@ -18,7 +18,7 @@ import { ClaudeHookSource } from './claudeHookSource';
 import { applyClaudeAttributionHooks } from './claudeHookInstaller';
 import type { EditAttribution } from '../watcher/workspaceWatcher';
 
-const SECTION = 'ai-cli-diff-view';
+const SECTION = 'claude-diff';
 const MODE_KEY = 'editAttribution';
 const POLL_INTERVAL_MS = 2000;
 type Mode = 'allExternalWrites' | 'claudeCodeHooks';
@@ -74,7 +74,7 @@ export function setupClaudeEditAttribution(
     if (opened > 0 && !warnedRecoveredSessions.has(session)) {
       warnedRecoveredSessions.add(session);
       void vscode.window.showWarningMessage(
-        'AI CLI Diff View: the Claude Code turn-start hook did not run for this turn, so its diffs opened ' +
+        'Diff Review for Claude Code: the Claude Code turn-start hook did not run for this turn, so its diffs opened ' +
         'only when Claude finished. If this repeats, restart the Claude session so it loads the hook.'
       );
     }
@@ -98,14 +98,14 @@ export function setupClaudeEditAttribution(
     setPolling(enabled);
     if (result === 'parseError') {
       void vscode.window.showErrorMessage(
-        'AI CLI Diff View: ~/.claude/settings.json is not valid JSON, so the Claude Code hook was not ' +
+        'Diff Review for Claude Code: ~/.claude/settings.json is not valid JSON, so the Claude Code hook was not ' +
         (enabled ? 'installed' : 'removed') + '. Fix the file and toggle the setting again.'
       );
     } else if (result === 'writeError') {
-      void vscode.window.showErrorMessage('AI CLI Diff View: could not write ~/.claude/settings.json.');
+      void vscode.window.showErrorMessage('Diff Review for Claude Code: could not write ~/.claude/settings.json.');
     } else if (result === 'installed' && announce) {
       void vscode.window.showInformationMessage(
-        'AI CLI Diff View: Claude Code hook installed. Only file changes made during a Claude turn will open ' +
+        'Diff Review for Claude Code: Claude Code hook installed. Only file changes made during a Claude turn will open ' +
         'diffs. Restart any Claude session that was already running so it picks up the hook.'
       );
     }
@@ -126,7 +126,7 @@ export function setupClaudeEditAttribution(
       if (!warnedNoEvents && !source.hasSeenAnyEvent()) {
         warnedNoEvents = true;
         void vscode.window.showWarningMessage(
-          'AI CLI Diff View ignored a file change because no Claude turn was running, and no hook ' +
+          'Diff Review for Claude Code ignored a file change because no Claude turn was running, and no hook ' +
           'event has been received yet. If Claude made this change, restart the Claude session so it ' +
           'loads the hook.'
         );

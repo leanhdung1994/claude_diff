@@ -1,0 +1,310 @@
+{
+  "name": "claude-diff",
+  "displayName": "Diff Review for Claude Code",
+  "description": "Review every file edit by Claude Code in VS Code's diff editor, then accept or revert it.",
+  "version": "0.0.1",
+  "publisher": "leanhdung1994",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leanhdung1994/claude-diff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leanhdung1994/claude-diff/issues"
+  },
+  "homepage": "https://github.com/leanhdung1994/claude-diff#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "diff",
+    "claude code"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onFileSystem:claude-diff-original"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "claude-diff.acceptAllHunks",
+        "title": "Accept All Changes",
+        "category": "Claude Diff",
+        "icon": "$(check)"
+      },
+      {
+        "command": "claude-diff.revertAllHunks",
+        "title": "Revert All Changes",
+        "category": "Claude Diff",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "claude-diff.acceptAllChanges",
+        "title": "Accept All Changes (All Files)",
+        "category": "Claude Diff",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "claude-diff.openPendingFile",
+        "title": "Open Pending File",
+        "category": "Claude Diff"
+      },
+      {
+        "command": "claude-diff.prevFile",
+        "title": "Previous Edited File",
+        "category": "Claude Diff",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "claude-diff.nextFile",
+        "title": "Next Edited File",
+        "category": "Claude Diff",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "claude-diff.openSettings",
+        "title": "Open Settings",
+        "category": "Claude Diff",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "claude-diff.prevFile",
+          "when": "claude-diff.activeIsPendingDiff",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claude-diff.nextFile",
+          "when": "claude-diff.activeIsPendingDiff",
+          "group": "navigation@2"
+        },
+        {
+          "command": "claude-diff.revertAllHunks",
+          "when": "claude-diff.activeIsPendingDiff",
+          "group": "navigation@3"
+        },
+        {
+          "command": "claude-diff.acceptAllHunks",
+          "when": "claude-diff.activeIsPendingDiff",
+          "group": "navigation@4"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "claude-diff.acceptAllChanges",
+          "when": "view == claude-diff.pendingFiles && claude-diff.hasPendingDiff",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claude-diff.openSettings",
+          "when": "view == claude-diff.pendingFiles",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "claude-diff.openPendingFile",
+          "when": "false"
+        },
+        {
+          "command": "claude-diff.acceptAllHunks",
+          "when": "claude-diff.activeIsPendingDiff"
+        },
+        {
+          "command": "claude-diff.revertAllHunks",
+          "when": "claude-diff.activeIsPendingDiff"
+        },
+        {
+          "command": "claude-diff.acceptAllChanges",
+          "when": "claude-diff.hasPendingDiff"
+        },
+        {
+          "command": "claude-diff.prevFile",
+          "when": "claude-diff.hasPendingDiff"
+        },
+        {
+          "command": "claude-diff.nextFile",
+          "when": "claude-diff.hasPendingDiff"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "claude-diff.acceptAllHunks",
+        "key": "ctrl+shift+y",
+        "mac": "cmd+shift+y",
+        "when": "claude-diff.activeIsPendingDiff"
+      },
+      {
+        "command": "claude-diff.revertAllHunks",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z",
+        "when": "claude-diff.activeIsPendingDiff"
+      },
+      {
+        "command": "claude-diff.prevFile",
+        "key": "alt+h",
+        "when": "claude-diff.hasPendingDiff"
+      },
+      {
+        "command": "claude-diff.nextFile",
+        "key": "alt+l",
+        "when": "claude-diff.hasPendingDiff"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claude-diff",
+          "title": "Claude Diff",
+          "icon": "media/claude-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claude-diff": [
+        {
+          "type": "webview",
+          "id": "claude-diff.pendingFiles",
+          "name": "Pending Files"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Diff Review for Claude Code",
+      "properties": {
+        "claude-diff.editAttribution": {
+          "type": "string",
+          "enum": [
+            "allExternalWrites",
+            "claudeCodeHooks"
+          ],
+          "enumDescriptions": [
+            "Treat every external write to a workspace file as an agent edit. Works with any AI CLI.",
+            "Only count writes made during a Claude Code turn. Installs UserPromptSubmit/Stop hooks in ~/.claude/settings.json."
+          ],
+          "default": "allExternalWrites",
+          "order": 0,
+          "description": "Decide which external file writes open a diff."
+        },
+        "claude-diff.supportedFileDetectionMode": {
+          "type": "string",
+          "enum": [
+            "defaultAndCustom",
+            "customOnly"
+          ],
+          "enumDescriptions": [
+            "Built-in text-file rules plus the custom extensions, filenames and patterns below.",
+            "Only the custom extensions, filenames and patterns below."
+          ],
+          "default": "defaultAndCustom",
+          "order": 1,
+          "description": "Which rules decide whether a file is reviewable."
+        },
+        "claude-diff.supportedFileExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 2,
+          "description": "Extra file extensions to treat as text (the leading dot is optional)."
+        },
+        "claude-diff.supportedFilenames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 3,
+          "description": "Extra exact file names to treat as text."
+        },
+        "claude-diff.supportedFilenamePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 4,
+          "description": "Extra file name globs (`*`, `?`) to treat as text, matched against the base name."
+        },
+        "claude-diff.soundNotificationsEnabled": {
+          "type": "boolean",
+          "default": false,
+          "order": 5,
+          "description": "Play a sound when Claude finishes a turn or needs input (Windows only). Adds Notification/Stop hooks to ~/.claude/settings.json."
+        },
+        "claude-diff.maxFileLines": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 0,
+          "order": 10,
+          "markdownDescription": "Advanced: ignore files with more than this many lines (no baseline, no diff). `0` disables the limit."
+        },
+        "claude-diff.baselineScanConcurrency": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "order": 11,
+          "description": "Advanced: maximum number of files read at once during the initial baseline scan. Lower it for large or remote workspaces."
+        },
+        "claude-diff.burstDetectionEnabled": {
+          "type": "boolean",
+          "default": true,
+          "order": 12,
+          "description": "Advanced: hold files written in a burst (e.g. a git checkout) until a branch change is ruled out, instead of opening their diffs immediately."
+        },
+        "claude-diff.burstDetectionWindowMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "maximum": 5000,
+          "order": 13,
+          "description": "Advanced: sliding window (ms) used to count file changes for burst detection."
+        },
+        "claude-diff.burstDetectionThreshold": {
+          "type": "number",
+          "default": 8,
+          "minimum": 2,
+          "maximum": 500,
+          "order": 14,
+          "description": "Advanced: number of distinct files changed within the window that counts as a burst."
+        },
+        "claude-diff.burstDetectionHoldMs": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 10000,
+          "order": 15,
+          "description": "Advanced: how long (ms) to hold burst files before opening their diffs when no git branch change is confirmed."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "diffEditor.hideUnchangedRegions.enabled": true
+    }
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('out', { recursive: true, force: true })\"",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run clean && npm run compile",
+    "test:attribution": "npm run compile && node scripts/test-attribution.js"
+  },
+  "dependencies": {
+    "diff": "^8.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "~1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

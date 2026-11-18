@@ -190,7 +190,7 @@ export class DiffManager implements vscode.Disposable {
     try {
       await vscode.window.tabGroups.close(targets);
     } catch (err) {
-      console.error('[ai-cli-diff] closeTextTabsFor failed:', err);
+      console.error('[claude-diff] closeTextTabsFor failed:', err);
     }
   }
 
@@ -503,7 +503,7 @@ export class DiffManager implements vscode.Disposable {
           preview: false,
         });
       } catch (err) {
-        console.error('[ai-cli-diff] keeping unsaved edits open failed:', err);
+        console.error('[claude-diff] keeping unsaved edits open failed:', err);
       }
     }
 
@@ -521,7 +521,7 @@ export class DiffManager implements vscode.Disposable {
     try {
       await vscode.window.tabGroups.close(targets);
     } catch (err) {
-      console.error('[ai-cli-diff] closing diff tabs failed:', err);
+      console.error('[claude-diff] closing diff tabs failed:', err);
     }
   }
 
@@ -575,7 +575,7 @@ export class DiffManager implements vscode.Disposable {
       await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
     } catch (err) {
       if (!isFileNotFound(err)) {
-        console.error('[ai-cli-diff] cannot stat file before reopening:', err);
+        console.error('[claude-diff] cannot stat file before reopening:', err);
       }
       return;
     }
@@ -599,7 +599,7 @@ export class DiffManager implements vscode.Disposable {
         );
       }
     } catch (err) {
-      console.error('[ai-cli-diff] reopenAsTextEditor failed:', err);
+      console.error('[claude-diff] reopenAsTextEditor failed:', err);
     }
   }
 

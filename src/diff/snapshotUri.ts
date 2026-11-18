@@ -11,7 +11,7 @@
 
 import * as vscode from 'vscode';
 
-export const SNAPSHOT_SCHEME = 'ai-cli-diff-original';
+export const SNAPSHOT_SCHEME = 'claude-diff-original';
 
 export function snapshotUriFor(fileUri: vscode.Uri): vscode.Uri {
   return fileUri.with({ scheme: SNAPSHOT_SCHEME });
