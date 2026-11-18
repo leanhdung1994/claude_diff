@@ -2,7 +2,7 @@
  * writeBurstMeter.ts
  *
  * Đo tốc độ ghi file thực tế để phân biệt batch operation (git checkout) với
- * AI tool edit — xem mục "Workspace watcher" trong CLAUDE.md. Ngưỡng/cửa sổ có
+ * edit của Claude — xem mục "Workspace watcher" trong CLAUDE.md. Ngưỡng/cửa sổ có
  * thể chỉnh qua settings `claude-diff.burstDetection*` (VS Code
  * Settings, hoặc nút bánh răng trên view Pending Files).
  *

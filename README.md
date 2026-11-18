@@ -1,28 +1,28 @@
 # Diff Review for Claude Code
 
-Review every file edit an AI CLI agent makes — Claude Code, Codex, Qwen, and
-more — in VS Code's own diff editor, before you keep it.
+Review every file edit Claude Code makes in VS Code's own diff editor, before
+you keep it.
 
-Works with any AI CLI tool out of the box: no setup, no hooks required. Edits
-are picked up from the file system, so it doesn't matter whether the agent runs
-in the Claude Code extension, VS Code's terminal or an external one.
+Works out of the box, with no setup. Edits are picked up from the file system,
+so it doesn't matter whether Claude Code runs in the Claude Code extension,
+VS Code's terminal or an external one.
 
 ## Features
 
-- **Automatic diffs.** When an agent writes a file, its diff opens in VS Code's
-  built-in diff editor: the version before the agent's edit on the left, the
-  live file on the right.
+- **Automatic diffs.** When Claude writes a file, its diff opens in VS Code's
+  built-in diff editor: the version before Claude's edit on the left, the live
+  file on the right.
 - **Only the changed lines.** Unchanged regions are collapsed by default
   (`diffEditor.hideUnchangedRegions.enabled`); click a "hidden lines" bar to
   expand it.
 - **A real editor on the right.** Edit, save, undo, IntelliSense and your
   keybindings all work while reviewing. `F7` / `Shift+F7` jump between changes.
 - **Accept or revert per file.** Use the buttons in the diff tab's title bar, or
-  `Ctrl+Shift+Y` / `Ctrl+Shift+Z`. Accept keeps the agent's version; Revert
-  restores the file (or deletes it, if the agent created it).
+  `Ctrl+Shift+Y` / `Ctrl+Shift+Z`. Accept keeps Claude's version; Revert
+  restores the file (or deletes it, if Claude created it).
 - **Pending Files view.** The Claude Diff icon in the Activity Bar lists every
   file waiting for review in its folder structure, with `+added −removed`
-  counts. Drag it into the Secondary Side Bar to keep it next to your agent's
+  counts. Drag it into the Secondary Side Bar to keep it next to the Claude Code
   chat.
 - **Survives reloads.** Pending diffs are kept in workspace state and restored
   when VS Code restarts.
@@ -31,7 +31,7 @@ in the Claude Code extension, VS Code's terminal or an external one.
 
 ## Usage
 
-1. Run an AI agent and let it edit files in your workspace.
+1. Run Claude Code and let it edit files in your workspace.
 2. Each edited file opens as a diff tab titled `<file> (AI changes)`.
 3. Review it, then **Accept** or **Revert** from the title bar. The next pending
    file opens automatically.
@@ -58,9 +58,10 @@ in the Claude Code extension, VS Code's terminal or an external one.
 All settings are under `claude-diff.*` (gear button in the Pending Files view).
 The most useful:
 
-- `editAttribution` — `allExternalWrites` (default) treats every external write
-  as an agent edit; `claudeCodeHooks` only counts writes made during a Claude
-  Code turn.
+- `editAttribution` — `allExternalWrites` (default) opens a diff for every
+  file written outside VS Code's editor, whoever wrote it; `claudeCodeHooks`
+  only counts writes made during a Claude Code turn, so files you copy in, git
+  or a formatter don't open diffs.
 - `supportedFileExtensions`, `supportedFilenames`, `supportedFilenamePatterns` —
   extra files to review.
 - `maxFileLines` — skip very large files (default 5000).

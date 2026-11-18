@@ -37,7 +37,7 @@ interface ExternalWriteOptions {
 /**
  * Optional gate: decides whether an external write was made by the agent.
  * When absent or disabled, every external write is treated as an agent edit
- * (previous behaviour, needed for Codex/Qwen which have no hooks).
+ * (the default `allExternalWrites` mode, which needs no hooks).
  */
 export interface EditAttribution {
   isEnabled(): boolean;

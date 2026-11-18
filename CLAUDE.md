@@ -4,8 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Extension Does
 
-Diff Review for Claude Code is a VS Code extension for reviewing AI CLI file edits inside VS Code.
-Best supported review workflows: Claude, Codex, and Qwen — all detected uniformly via the workspace watcher (no CLI-specific hooks required). The extension does not launch or host any agent itself; the agent runs wherever the user likes (Claude Code extension, a terminal, …).
+Diff Review for Claude Code is a VS Code extension for reviewing Claude Code's file edits inside VS Code. Edits are detected through the workspace watcher, with no hooks required by default. The extension does not launch or host Claude Code itself; it runs wherever the user likes (Claude Code extension, a terminal, …).
 
 ## Commands
 
@@ -28,7 +27,7 @@ npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
 
 `src/extension.ts` is the entry point, activated `onStartupFinished` (and `onFileSystem:claude-diff-original`, see below). It wires together the `DiffManager`, the snapshot content provider, the workspace and git-branch watchers, the navigation manager and the Pending Files view, then registers commands.
 
-The core responsibility: capture a before-image of a file, detect the after-image once an AI tool writes it, then show it in VS Code's built-in diff editor while keeping enough per-file state to accept or revert the whole file.
+The core responsibility: capture a before-image of a file, detect the after-image once Claude writes it, then show it in VS Code's built-in diff editor while keeping enough per-file state to accept or revert the whole file.
 
 ### Diff rendering — VS Code's built-in diff editor
 
@@ -55,7 +54,7 @@ Accept and revert are intentionally asymmetric: accepting just deletes the snaps
 
 ### Edit detection
 
-Every CLI — including Claude — is detected through the workspace watcher. By default (`editAttribution = allExternalWrites`) every external write is treated as an agent edit. The opt-in Claude turn-window mode below only *filters* the watcher's writes; it is not a separate detection pipeline.
+Claude's edits are detected through the workspace watcher. By default (`editAttribution = allExternalWrites`) every external write is treated as an agent edit, whoever made it. The opt-in Claude turn-window mode below only *filters* the watcher's writes; it is not a separate detection pipeline.
 
 **Workspace watcher (the only path for agent edits)**
 
