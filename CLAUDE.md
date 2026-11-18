@@ -40,7 +40,7 @@ The core responsibility: capture a before-image of a file, detect the after-imag
 - Diff tabs survive a window reload. The `onFileSystem:claude-diff-original` activation event lets VS Code activate the extension to resolve a restored left side; the provider is registered synchronously at the top of `activateExtension`, and `closeStaleDiffTabs()` closes restored tabs whose snapshot is gone. `DiffManager.dispose()` therefore never closes tabs.
 - Accept/revert/clearAll/acceptAllPending **open the plain text editor first, then close the diff tab** (`reopenAsTextEditor` → `closeDiffTabs`). Closing the last editor of a document with unsaved edits would otherwise prompt save/discard. `captureViewState()` records the diff tab's editor group (so with split editors the plain editor replaces the diff in its own group, even when its title-bar button was clicked in an inactive group) and the cursor/scroll of the visible `file:` editor for that path in that group, i.e. the diff's right side.
 - `extension.ts` auto-routes tabs: if a pending file is opened as a plain text editor, that tab is closed and reopened as its diff (`autoRouteTab`). A file whose snapshot was just removed is not rerouted, which is what lets `reopenAsTextEditor` work.
-- `hunkCalculator.ts` (Myers via the `diff` library, compared on LF-normalised text) is still used to decide whether a file has any change at all (`openDiff` drops pure-EOL changes) and for the `+/−/hunks` counts in Pending Files. Its pass 3 (`splitAlignedLines`) and `groupId` were built for the removed Monaco renderer; the hunk count shown is the number of split sub-hunks.
+- `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library, compared on LF-normalised text) decides whether a file has any change at all (`openDiff` drops pure-EOL changes) and gives the `+/−/hunks` counts in Pending Files. A hunk is a contiguous block of changed lines, matching the change blocks the diff editor shows.
 
 ### Diff state model
 
@@ -120,12 +120,10 @@ All of these are edited in VS Code's Settings UI (the Pending Files gear opens i
 
 | Command | Keybinding | Purpose |
 | --- | --- | --- |
-| `claude-diff.acceptAllHunks` | `Ctrl+Shift+Y` (when `activeIsPendingDiff`) | Accept the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
-| `claude-diff.revertAllHunks` | `Ctrl+Shift+Z` (when `activeIsPendingDiff`) | Revert the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
+| `claude-diff.acceptFile` | `Ctrl+Shift+Y` (when `activeIsPendingDiff`) | Accept the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
+| `claude-diff.revertFile` | `Ctrl+Shift+Z` (when `activeIsPendingDiff`) | Revert the pending diff in the active tab (or the one whose title-bar button was clicked); otherwise warn, never guess |
 | `claude-diff.acceptAllChanges` | — | Accept all pending changes across files |
 | `claude-diff.openPendingFile` | — | Open a pending file's diff (takes a path arg) |
 | `claude-diff.openSettings` | — | Open Settings filtered to this extension |
 | `claude-diff.prevFile` | `Alt+H` (when `hasPendingDiff`) | Go to previous pending file |
 | `claude-diff.nextFile` | `Alt+L` (when `hasPendingDiff`) | Go to next pending file |
-
-The `acceptAllHunks` / `revertAllHunks` ids are historical; they act on the whole file.

@@ -26,11 +26,9 @@
 
 import * as path from 'path';
 
-export type HookEventName = 'PreToolUse' | 'PostToolUse' | 'UserPromptSubmit' | 'Stop';
+export type HookEventName = 'UserPromptSubmit' | 'Stop';
 
-const KNOWN_EVENTS: ReadonlySet<string> = new Set<HookEventName>([
-  'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop',
-]);
+const KNOWN_EVENTS: ReadonlySet<string> = new Set<HookEventName>(['UserPromptSubmit', 'Stop']);
 
 export interface HookEvent {
   event: HookEventName;
@@ -162,19 +160,17 @@ export class ClaudeAttribution {
       return;
     }
 
-    if (evt.event === 'Stop') {
-      const open = this.openTurns(evt.sessionId);
-      const since = evt.sessionId ? this.lastStopAt.get(evt.sessionId) : undefined;
-      if (evt.sessionId) { this.lastStopAt.set(evt.sessionId, evt.at); }
-      if (open.length === 0) {
-        if (!historical) {
-          this.onStopWithoutStart({ sessionId: evt.sessionId, cwd: evt.cwd, at: evt.at, since });
-        }
-        return;
+    // Stop
+    const open = this.openTurns(evt.sessionId);
+    const since = evt.sessionId ? this.lastStopAt.get(evt.sessionId) : undefined;
+    if (evt.sessionId) { this.lastStopAt.set(evt.sessionId, evt.at); }
+    if (open.length === 0) {
+      if (!historical) {
+        this.onStopWithoutStart({ sessionId: evt.sessionId, cwd: evt.cwd, at: evt.at, since });
       }
-      for (const t of open) { t.end = Math.max(t.start, evt.at); }
+      return;
     }
-    // PreToolUse / PostToolUse: leftovers from the per-edit design — ignored.
+    for (const t of open) { t.end = Math.max(t.start, evt.at); }
   }
 
   /**

@@ -32,13 +32,13 @@
   "contributes": {
     "commands": [
       {
-        "command": "claude-diff.acceptAllHunks",
+        "command": "claude-diff.acceptFile",
         "title": "Accept All Changes",
         "category": "Claude Diff",
         "icon": "$(check)"
       },
       {
-        "command": "claude-diff.revertAllHunks",
+        "command": "claude-diff.revertFile",
         "title": "Revert All Changes",
         "category": "Claude Diff",
         "icon": "$(discard)"
@@ -86,12 +86,12 @@
           "group": "navigation@2"
         },
         {
-          "command": "claude-diff.revertAllHunks",
+          "command": "claude-diff.revertFile",
           "when": "claude-diff.activeIsPendingDiff",
           "group": "navigation@3"
         },
         {
-          "command": "claude-diff.acceptAllHunks",
+          "command": "claude-diff.acceptFile",
           "when": "claude-diff.activeIsPendingDiff",
           "group": "navigation@4"
         }
@@ -114,11 +114,11 @@
           "when": "false"
         },
         {
-          "command": "claude-diff.acceptAllHunks",
+          "command": "claude-diff.acceptFile",
           "when": "claude-diff.activeIsPendingDiff"
         },
         {
-          "command": "claude-diff.revertAllHunks",
+          "command": "claude-diff.revertFile",
           "when": "claude-diff.activeIsPendingDiff"
         },
         {
@@ -137,13 +137,13 @@
     },
     "keybindings": [
       {
-        "command": "claude-diff.acceptAllHunks",
+        "command": "claude-diff.acceptFile",
         "key": "ctrl+shift+y",
         "mac": "cmd+shift+y",
         "when": "claude-diff.activeIsPendingDiff"
       },
       {
-        "command": "claude-diff.revertAllHunks",
+        "command": "claude-diff.revertFile",
         "key": "ctrl+shift+z",
         "mac": "cmd+shift+z",
         "when": "claude-diff.activeIsPendingDiff"

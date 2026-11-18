@@ -9,7 +9,7 @@
  * diff thay cả file.
  *
  * Nguyên tắc dùng: **LF ở giữa, EOL ở biên**. Mọi nội dung đi vào
- * `calculateHunks()` và sang webview đều đã qua `toLf()`; chỉ `fromLf()` lại
+ * `computeDiffStats()` đều đã qua `toLf()`; chỉ `fromLf()` lại
  * đúng tại các điểm ghi ra document/đĩa.
  */
 

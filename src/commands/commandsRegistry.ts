@@ -40,7 +40,7 @@ export function registerAllCommands(deps: CommandDeps): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-diff.acceptAllHunks', async (arg?: unknown) => {
+    vscode.commands.registerCommand('claude-diff.acceptFile', async (arg?: unknown) => {
       const filePath = getActiveDiffFilePath(arg);
       if (!filePath) {
         vscode.window.showWarningMessage('Open a pending diff first.');
@@ -63,7 +63,7 @@ export function registerAllCommands(deps: CommandDeps): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('claude-diff.revertAllHunks', async (arg?: unknown) => {
+    vscode.commands.registerCommand('claude-diff.revertFile', async (arg?: unknown) => {
       const filePath = getActiveDiffFilePath(arg);
       if (!filePath) {
         vscode.window.showWarningMessage('Open a pending diff first.');

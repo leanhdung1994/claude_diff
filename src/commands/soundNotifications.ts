@@ -6,9 +6,8 @@ import * as path from 'path';
  *
  * Bật/tắt âm thanh thông báo (Claude vừa xong lượt / cần input) qua hook
  * `Notification`/`Stop` trong `~/.claude/settings.json`. Đây là tính năng độc
- * lập với diff detection — extension không còn tự cài `PreToolUse`/
- * `PostToolUse` nữa (xem CLAUDE.md), nên chỉ động vào đúng 2 key này, giữ
- * nguyên mọi hook khác user đã có sẵn.
+ * lập với diff detection; chỉ động vào entry của chính nó dưới đúng 2 key này,
+ * giữ nguyên mọi hook khác user đã có sẵn.
  */
 
 function getClaudeSettingsPath(): string {

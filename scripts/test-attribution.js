@@ -25,19 +25,13 @@ console.log('Turn window');
 {
   const a = make();
   a.ingest(ev('UserPromptSubmit', 1000));
-  a.ingest(ev('PreToolUse', 1200)); // leftover per-edit event: ignored
   ok(a.isClaudeWrite('/ws/doc.qmd', 3000) && a.isClaudeWrite('/ws/doc.qmd', 3400),
-    'two quick writes to one file with no per-edit events → both Claude (the reported bug)');
+    'two quick writes to one file in one turn → both Claude');
   ok(a.isClaudeWrite('/ws/doc.qmd', 20000), 'late change notice inside a long turn → Claude');
 }
-{
-  const a = make();
-  ok(A.parseHookEvent(JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Edit' }), 1) !== undefined,
-    'leftover PostToolUse event parses');
-  a.ingest(ev('PreToolUse', 1000));
-  a.ingest(ev('PostToolUse', 1100));
-  ok(!a.isClaudeWrite('/ws/a.ts', 1050), 'PreToolUse/PostToolUse alone open no turn');
-}
+ok(['PreToolUse', 'PostToolUse', 'Notification'].every(e =>
+  A.parseHookEvent(JSON.stringify({ hook_event_name: e, session_id: 's1' }), 1) === undefined),
+  'events other than UserPromptSubmit/Stop are not parsed');
 
 console.log('Workspace filter');
 {

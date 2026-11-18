@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { calculateHunks, Hunk } from './hunkCalculator';
+import { computeDiffStats, DiffStats } from './diffStats';
 import { toLf } from './eol';
 import { SnapshotStore, SnapshotState } from './snapshotStore';
 import { isPendingDiffInput, snapshotUriFor } from './snapshotUri';
@@ -37,19 +37,9 @@ function isFileNotFound(error: unknown): boolean {
   return error instanceof vscode.FileSystemError && error.code === 'FileNotFound';
 }
 
-export interface DiffPreviewFile {
-  filePath: string;
-  originalContent: string;
-  currentContent: string;
-  hunks: Hunk[];
-}
-
 /** Lightweight data for navigators that must not receive file contents. */
-export interface DiffPreviewMetadata {
+export interface DiffPreviewMetadata extends DiffStats {
   filePath: string;
-  additions: number;
-  deletions: number;
-  hunks: number;
 }
 
 /**
@@ -133,8 +123,8 @@ export class DiffManager implements vscode.Disposable {
     // So trên LF thuần: thay đổi thuần EOL (git checkout, đổi setting files.eol,
     // formatter...) cho ra 0 hunk và rơi vào nhánh dọn dẹp bên dưới, thay vì mở
     // một diff phủ cả file.
-    const hunks = calculateHunks(toLf(snapshot.content), toLf(modifiedContent));
-    if (hunks.length === 0) {
+    const { hunks } = computeDiffStats(toLf(snapshot.content), toLf(modifiedContent));
+    if (hunks === 0) {
       // A newly-created empty file is still pending: Revert must delete it and
       // Accept must keep it. There is simply no text hunk to render.
       if (!snapshot.fileExistedBefore) { return; }
@@ -308,11 +298,11 @@ export class DiffManager implements vscode.Disposable {
   }
 
   /**
-   * Build the diff payload for a pending file: the snapshot is the original
-   * side, the open document (or the file on disk) the modified side. Both are
-   * normalized to LF before calculating hunks.
+   * Change counts for a pending file: the snapshot is the original side, the
+   * open document (or the file on disk) the modified side. Both are normalized
+   * to LF before counting.
    */
-  async getDiffPreviewFile(filePath: string): Promise<DiffPreviewFile | undefined> {
+  private async getPreviewMetadata(filePath: string): Promise<DiffPreviewMetadata | undefined> {
     const absPath = normalizePath(filePath);
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return undefined; }
@@ -335,19 +325,11 @@ export class DiffManager implements vscode.Disposable {
       }
     }
 
-    const originalLf = toLf(snapshot.content);
-    const currentLf = toLf(currentContent);
-    const hunks = calculateHunks(originalLf, currentLf);
-    if (hunks.length === 0 && snapshot.fileExistedBefore) {
+    const stats = computeDiffStats(toLf(snapshot.content), toLf(currentContent));
+    if (stats.hunks === 0 && snapshot.fileExistedBefore) {
       return undefined;
     }
-
-    return {
-      filePath: absPath,
-      originalContent: originalLf,
-      currentContent: currentLf,
-      hunks,
-    };
+    return { filePath: absPath, ...stats };
   }
 
   /**
@@ -356,16 +338,9 @@ export class DiffManager implements vscode.Disposable {
    * navigator, not a second diff renderer.
    */
   async getDiffPreviewMetadata(): Promise<DiffPreviewMetadata[]> {
-    const files = await Promise.all(this.getPendingFiles().map(async (filePath) => {
-      const preview = await this.getDiffPreviewFile(filePath);
-      if (!preview) { return undefined; }
-      return {
-        filePath: preview.filePath,
-        additions: preview.hunks.reduce((total, hunk) => total + hunk.addedLines.length, 0),
-        deletions: preview.hunks.reduce((total, hunk) => total + hunk.removedLines.length, 0),
-        hunks: preview.hunks.length,
-      };
-    }));
+    const files = await Promise.all(
+      this.getPendingFiles().map((filePath) => this.getPreviewMetadata(filePath))
+    );
     return files.filter((file): file is DiffPreviewMetadata => file !== undefined);
   }
 
