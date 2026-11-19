@@ -6,9 +6,13 @@
  *
  * Read on demand: WorkspaceWatcher asks right before deciding about a write
  * (≥200ms after the FS event). The `UserPromptSubmit` hook ran before Claude
- * started working, so the turn's start is always on disk by then. A slow
- * polling timer (start()) additionally picks up `Stop` events promptly, so a
- * missed turn start is noticed when the turn ends, not at the next write.
+ * started working, so the turn's start is always on disk by then.
+ *
+ * start() also reads new events as they arrive: an `fs.watch` on the folder
+ * (it is under the home directory, not the workspace) plus a slow polling
+ * timer as a backup. So a `Stop` without a turn start is noticed when the turn
+ * ends, and in per-file mode a `PostToolUse` claim or a `Stop` decides held
+ * writes within a fraction of a second instead of at the next write.
  *
  * Reads are serialized: two overlapping reads would both see the same new file
  * before either marks it as seen, and ingest it twice (a second `Stop` would
@@ -20,11 +24,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { ClaudeAttribution, parseHookEvent } from './claudeAttribution';
+import { ClaudeAttribution, WriteVerdict, parseHookEvent } from './claudeAttribution';
 import { getClaudeEventsDir } from './claudeHookInstaller';
 
 const FILE_MAX_AGE_MS = 30 * 60_000;
 const CLEANUP_INTERVAL_MS = 60_000;
+/** Coalesces the burst of fs.watch notifications one event file produces (tmp write + rename). */
+const WATCH_DEBOUNCE_MS = 50;
 
 export class ClaudeHookSource {
   private readonly seen = new Set<string>();
@@ -39,9 +45,16 @@ export class ClaudeHookSource {
     private readonly eventsDir: string = getClaudeEventsDir()
   ) {}
 
+  /** Turn-window verdict (ignores per-file mode). */
   async isClaudeWrite(absPath: string, writeAt: number): Promise<boolean> {
     await this.refresh();
     return this.attribution.isClaudeWrite(absPath, writeAt);
+  }
+
+  /** Verdict under the current mode, after reading any new events. */
+  async classifyWrite(absPath: string, writeAt: number): Promise<WriteVerdict> {
+    await this.refresh();
+    return this.attribution.classifyWrite(absPath, writeAt);
   }
 
   hasSeenAnyEvent(): boolean {
@@ -56,13 +69,42 @@ export class ClaudeHookSource {
     return run;
   }
 
-  /** Poll the events folder every `intervalMs` until disposed. */
+  /**
+   * Read new events as they arrive (fs.watch) and every `intervalMs` (backup:
+   * fs.watch can miss events or fail, and the folder may not exist yet).
+   */
   start(intervalMs = 2000): { dispose(): void } {
-    const timer = setInterval(() => {
+    let watcher: fs.FSWatcher | undefined;
+    let debounce: NodeJS.Timeout | undefined;
+    const kick = () => {
       if (this.pendingReads === 0) { void this.refresh().catch(() => {}); }
-    }, intervalMs);
+    };
+    const onWatch = () => {
+      if (debounce) { clearTimeout(debounce); }
+      // Queue a read even if one is running: it may have listed the folder
+      // before this file landed. Reads are serialized, so this is safe.
+      debounce = setTimeout(() => { debounce = undefined; void this.refresh().catch(() => {}); }, WATCH_DEBOUNCE_MS);
+    };
+    const ensureWatcher = () => {
+      if (watcher) { return; }
+      try {
+        watcher = fs.watch(this.eventsDir, onWatch);
+        watcher.on('error', () => { watcher?.close(); watcher = undefined; });
+      } catch {
+        watcher = undefined; // folder missing: retried at the next poll
+      }
+    };
+    ensureWatcher();
+    const timer = setInterval(() => { ensureWatcher(); kick(); }, intervalMs);
     timer.unref?.();
-    return { dispose: () => clearInterval(timer) };
+    return {
+      dispose: () => {
+        clearInterval(timer);
+        if (debounce) { clearTimeout(debounce); }
+        watcher?.close();
+        watcher = undefined;
+      },
+    };
   }
 
   private async doRefresh(): Promise<void> {

@@ -334,5 +334,22 @@ console.log('settings.json installer');
     ok(missed === 0, 'startup catch-up: that turn\'s Stop is not a missed start');
   }
 
+  {
+    // start(): a new event file is read within a fraction of a second, without waiting for the poll.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'events-'));
+    let changed = 0;
+    const src = new S.ClaudeHookSource(make({ perFile: () => true, onDecisionsChanged: () => changed++ }), dir);
+    const handle = src.start(60_000);
+    await new Promise(r => setTimeout(r, 50));
+    fs.writeFileSync(path.join(dir, 'start.json'), JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's7', cwd: '/ws' }));
+    await new Promise(r => setTimeout(r, 300));
+    fs.writeFileSync(path.join(dir, 'post.json'), JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's7', cwd: '/ws',
+      tool_name: 'Edit', tool_input: { file_path: n('/ws/a.R') } }));
+    await new Promise(r => setTimeout(r, 300));
+    handle.dispose();
+    ok(changed === 1 && await src.classifyWrite('/ws/a.R', Date.now()) === 'claude',
+      'start(): fs.watch picks up a PostToolUse claim without waiting for the poll');
+  }
+
   console.log(`\n${pass} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });
