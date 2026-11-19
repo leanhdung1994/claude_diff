@@ -73,6 +73,8 @@ export class DiffManager implements vscode.Disposable {
    * trigger the "edited back to the original" cleanup for the same file.
    */
   private readonly resolving = new Set<string>();
+  /** Paths whose openDiff() is in flight. */
+  private readonly opening = new Set<string>();
 
   /**
    * filePath (normalized) của tab đang active NGAY TRƯỚC khi WorkspaceWatcher
@@ -106,10 +108,46 @@ export class DiffManager implements vscode.Disposable {
     );
   }
 
-  async openDiff(filePath: string, options?: { preserveFocus?: boolean }): Promise<void> {
+  /** True while openDiff() is opening this file's diff (auto-route skips it). */
+  isOpeningDiff(filePath: string): boolean {
+    return this.opening.has(normalizePath(filePath));
+  }
+
+  /**
+   * Show a pending file's diff. Group, first match wins:
+   * 1. the group of an existing diff tab of this file (no second copy);
+   * 2. `options.viewColumn`;
+   * 3. the group of a text tab showing the file — the diff replaces it;
+   * 4. the active group.
+   *
+   * The diff opens BEFORE the file's text tabs close, so a group whose only
+   * tab was that text tab is never emptied (VS Code would remove it).
+   *
+   * @param options.preserveFocus Never move keyboard focus.
+   * @param options.keepFocusIfInactive Move focus only when the diff opens in
+   *   the active group. Used for agent writes: a diff that lands in another
+   *   group appears there without pulling the user away from where they type.
+   * @returns Whether a diff tab for the file is now shown.
+   */
+  async openDiff(
+    filePath: string,
+    options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean; keepFocusIfInactive?: boolean }
+  ): Promise<boolean> {
     const absPath = normalizePath(filePath);
+    this.opening.add(absPath);
+    try {
+      return await this.openDiffInner(absPath, options);
+    } finally {
+      this.opening.delete(absPath);
+    }
+  }
+
+  private async openDiffInner(
+    absPath: string,
+    options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean; keepFocusIfInactive?: boolean }
+  ): Promise<boolean> {
     const snapshot = this.snapshots.get(absPath);
-    if (snapshot === undefined) { return; }
+    if (snapshot === undefined) { return false; }
 
     let modifiedContent: string;
     try {
@@ -117,7 +155,7 @@ export class DiffManager implements vscode.Disposable {
         await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))
       ).toString('utf8');
     } catch {
-      return;
+      return false;
     }
 
     // So trên LF thuần: thay đổi thuần EOL (git checkout, đổi setting files.eol,
@@ -127,23 +165,29 @@ export class DiffManager implements vscode.Disposable {
     if (hunks === 0) {
       // A newly-created empty file is still pending: Revert must delete it and
       // Accept must keep it. There is simply no text hunk to render.
-      if (!snapshot.fileExistedBefore) { return; }
+      if (!snapshot.fileExistedBefore) { return false; }
       this.snapshots.delete(absPath);
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
-      return;
+      return false;
     }
 
-    await this.closeTextTabsFor(absPath);
+    const textTabs = this.findTextTabs(absPath);
+    const textTab = textTabs.find((tab) => tab.group.isActive)
+      ?? textTabs.find((tab) => tab.isActive)
+      ?? textTabs[0];
+    const viewColumn = this.findDiffTabs(absPath)[0]?.group.viewColumn
+      ?? options?.viewColumn
+      ?? textTab?.group.viewColumn;
+    const intoInactiveGroup = viewColumn !== undefined
+      && viewColumn !== vscode.window.tabGroups.activeTabGroup.viewColumn;
 
     const fileUri = vscode.Uri.file(canonicalCasePath(absPath));
-    // Reveal an already-open diff in its own group instead of opening a
-    // second copy in the active group.
-    const existing = this.findDiffTabs(absPath)[0];
     const showOptions: vscode.TextDocumentShowOptions = {
       preview: false,
-      preserveFocus: options?.preserveFocus === true,
-      viewColumn: existing?.group.viewColumn,
+      preserveFocus: options?.preserveFocus === true
+        || (options?.keepFocusIfInactive === true && intoInactiveGroup),
+      viewColumn,
     };
     const label = path.basename(fileUri.fsPath);
     const title = snapshot.fileExistedBefore ? `${label} (AI changes)` : `${label} (new file, AI)`;
@@ -151,31 +195,39 @@ export class DiffManager implements vscode.Disposable {
 
     // vscode.diff là async: nếu clearAll()/accept() chạy xong TRƯỚC khi tab kịp
     // mở (vd: git branch confirm ngay giữa lúc đang mở), snapshot đã bị xoá nhưng
-    // tab này vẫn được mở ra sau đó. Không còn gì để diff — đóng luôn.
+    // tab này vẫn được mở ra sau đó. Không còn gì để diff — đóng luôn, và giữ
+    // nguyên các tab text của file.
     if (!this.snapshots.has(absPath)) {
       await this.closeDiffTabs(absPath);
+      this._onDidChangeDiffs.fire();
+      return false;
     }
+    await this.closeTextTabsFor(absPath);
     this._onDidChangeDiffs.fire();
+    return true;
   }
 
-  /**
-   * Đóng mọi tab text editor đang trỏ tới file này, để diff editor mới mở
-   * không tạo tab thứ hai cùng file.
-   */
-  private async closeTextTabsFor(absPath: string): Promise<void> {
-    const targets: vscode.Tab[] = [];
+  private findTextTabs(absPath: string): vscode.Tab[] {
+    const tabs: vscode.Tab[] = [];
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
-        if (!(tab.input instanceof vscode.TabInputText)) { continue; }
-        if (normalizePath(tab.input.uri.fsPath) === absPath) {
-          // Preserve unsaved user edits. Closing a dirty text tab here would
-          // trigger VS Code's save/discard dialog while an external change is
-          // being routed to the diff editor.
-          if (tab.isDirty) { continue; }
-          targets.push(tab);
+        if (tab.input instanceof vscode.TabInputText && normalizePath(tab.input.uri.fsPath) === absPath) {
+          tabs.push(tab);
         }
       }
     }
+    return tabs;
+  }
+
+  /**
+   * Close every text tab of this file once its diff is open, so the file
+   * isn't shown twice.
+   */
+  private async closeTextTabsFor(absPath: string): Promise<void> {
+    // Preserve unsaved user edits. Closing a dirty text tab here would trigger
+    // VS Code's save/discard dialog while an external change is being routed
+    // to the diff editor.
+    const targets = this.findTextTabs(absPath).filter((tab) => !tab.isDirty);
     if (targets.length === 0) { return; }
     try {
       await vscode.window.tabGroups.close(targets);
@@ -218,7 +270,7 @@ export class DiffManager implements vscode.Disposable {
     }
 
     if (nextTarget) {
-      await this.openDiff(nextTarget);
+      await this.openDiff(nextTarget, { viewColumn: view?.viewColumn });
     }
     this._onDidChangeDiffs.fire();
   }
@@ -254,7 +306,7 @@ export class DiffManager implements vscode.Disposable {
     }
 
     if (nextTarget) {
-      await this.openDiff(nextTarget);
+      await this.openDiff(nextTarget, { viewColumn: view?.viewColumn });
     }
     this._onDidChangeDiffs.fire();
   }

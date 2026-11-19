@@ -743,7 +743,10 @@ export class WorkspaceWatcher {
     // The open diff now owns this file's before-image.
     this.ignoredWrites.delete(filePath);
     this.diffManager.loadSnapshot(filePath, originalContent, fileExistedBefore);
-    this.diffManager.openDiff(filePath, fromBurstDump ? { preserveFocus: true } : undefined).catch((err: unknown) => {
+    // Agent writes never pull focus to another group; a burst dump never
+    // takes focus at all.
+    const focus = fromBurstDump ? { preserveFocus: true } : { keepFocusIfInactive: true };
+    this.diffManager.openDiff(filePath, focus).catch((err: unknown) => {
       console.error('[claude-diff] workspaceWatcher openDiff failed:', err);
     });
   }

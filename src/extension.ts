@@ -142,12 +142,16 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     // document from the auto-router: doing so makes VS Code show its
     // save/discard confirmation and can discard edits before auto-save runs.
     if (tab.isDirty) { return; }
+    // Only the tab its group shows. openDiff() opens the diff in front of the
+    // text tab before closing it, which reports that tab as `changed`
+    // (no longer active); routing it again would steal focus.
+    if (!tab.isActive) { return; }
     const fsPath = tab.input.uri.fsPath;
-    if (!diffManager.hasPendingDiff(fsPath)) { return; }
+    if (!diffManager.hasPendingDiff(fsPath) || diffManager.isOpeningDiff(fsPath)) { return; }
     void (async () => {
       try {
-        await vscode.window.tabGroups.close(tab);
-        await diffManager.openDiff(fsPath);
+        // openDiff() opens the diff in this tab's group, then closes the tab.
+        await diffManager.openDiff(fsPath, { viewColumn: tab.group.viewColumn });
       } catch (err) {
         console.error('[claude-diff] auto-route failed:', err);
       }

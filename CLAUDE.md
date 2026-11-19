@@ -77,6 +77,19 @@ editor while keeping enough per-file state to accept or revert the whole file.
     you work elsewhere), so it never moves focus: a diff that is the visible tab
     of its group is replaced in place by the plain file with `preserveFocus`,
     and a background diff tab is just closed.
+- **Where a diff opens** — `openDiff` picks the group, first match wins:
+  1. the group of an existing diff tab of the file (never a second copy);
+  2. an explicit `viewColumn` (auto-route, the next file after
+     Accept/Revert);
+  3. the group of a text tab showing the file (the active group's tab, else
+     a group's visible tab, else the first) — the diff replaces it;
+  4. the active group.
+
+  The diff opens **before** the file's text tabs close (`closeTextTabsFor`,
+  dirty tabs are kept): closing a group's only tab first would make VS Code
+  remove the group. Agent writes pass `keepFocusIfInactive` (focus moves only
+  when the diff lands in the active group); burst dumps pass `preserveFocus`.
+  `openDiff` returns whether a diff tab is now shown.
 - **Tab recognition** — `isPendingDiffInput()`: a `TabInputTextDiff` whose
   `original.scheme` is the snapshot scheme. There is no panel registry;
   `findDiffTabs` / `closeDiffTabs` scan `vscode.window.tabGroups`.
@@ -97,9 +110,12 @@ editor while keeping enough per-file state to accept or revert the whole file.
   - It also records the cursor/scroll of the visible `file:` editor for that
     path in that group, i.e. the diff's right side.
 - **Auto-routing** — if a pending file is opened as a plain text editor,
-  `extension.ts` closes that tab and reopens it as its diff (`autoRouteTab`). A
-  file whose snapshot was just removed is not rerouted, which is what lets
-  `reopenAsTextEditor` work.
+  `extension.ts` reopens it as its diff in that tab's group (`autoRouteTab` →
+  `openDiff(path, { viewColumn })`, which closes the text tab after the diff
+  opens). A file whose snapshot was just removed is not rerouted, which is
+  what lets `reopenAsTextEditor` work. Only the active tab of its group is
+  routed, and not while `isOpeningDiff`: opening the diff in front of the text
+  tab reports it as `changed`, and routing it again would steal focus.
 - **Stats** — `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library,
   compared on LF-normalised text):
   - decides whether a file has any change at all (`openDiff` drops pure-EOL
