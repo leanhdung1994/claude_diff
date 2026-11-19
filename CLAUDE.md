@@ -17,6 +17,7 @@ Code itself; it runs wherever the user likes (Claude Code extension, a terminal,
 npm install
 npm run compile      # tsc -p ./  → out/  (main build / correctness check)
 npm run watch        # tsc -watch -p ./  (normal dev loop)
+npm version minor
 npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
 ```
 
@@ -25,9 +26,8 @@ npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
 - There is no lint, formatter, or general test runner configured.
   `npm run compile` is the minimum correctness gate; `npm run test:attribution`
   runs the only automated tests (Claude hook attribution: turn window and
-  per-file rule, hook installer, event source). Manually
-  validate diff opening, accept/revert, and navigation in the Extension
-  Development Host.
+  per-file rule, hook installer, event source). Manually validate diff opening,
+  accept/revert, and navigation in the Extension Development Host.
 - `out/` is untracked and `tsc` never deletes files, so output from deleted
   modules lingers locally; `vscode:prepublish` runs `npm run clean` first so it
   is never packaged.
@@ -58,16 +58,19 @@ editor while keeping enough per-file state to accept or revert the whole file.
   (`'<name> (new file, AI)'` for a file the agent created). The **right/modified
   side** is the real file (`file:` URI), so editing, saving, undo, language
   features and keybindings are VS Code's own.
+
 - The **left/original side** is a read-only virtual document on the
   `claude-diff-original:` scheme (`src/diff/snapshotUri.ts`). The URI is the
   file URI with only the scheme swapped, so it keeps the file name and language.
   `SnapshotContentProvider` (`src/diff/snapshotContentProvider.ts`) serves
   `DiffManager.getSnapshot(uri.fsPath)` and fires `onDidChange` for every open
   snapshot document on each `onDidChangeDiffs`.
+
 - Unchanged lines are collapsed through `contributes.configurationDefaults` →
   `diffEditor.hideUnchangedRegions.enabled: true`. That, inline vs side-by-side
   (`diffEditor.renderSideBySide`) and every other diff option are global user
   settings — there is no per-editor API.
+
 - There is **no per-hunk accept/reject** (by design). Accept/revert work on
   whole files.
   - The diff editor's own "revert block" arrows still work: they edit the right
@@ -77,35 +80,37 @@ editor while keeping enough per-file state to accept or revert the whole file.
     you work elsewhere), so it never moves focus: a diff that is the visible tab
     of its group is replaced in place by the plain file with `preserveFocus`,
     and a background diff tab is just closed.
+
 - **Where a diff opens** — `openDiff` picks the group, first match wins:
   1. the group of an existing diff tab of the file (never a second copy),
      preferring one in the explicit `viewColumn`;
-  2. an explicit `viewColumn` (auto-route, the next file after
-     Accept/Revert);
-  3. the group of a text tab showing the file (the active group's tab, else
-     a group's visible tab, else the first) — the diff replaces it;
+  2. an explicit `viewColumn` (auto-route, the next file after Accept/Revert);
+  3. the group of a text tab showing the file (the active group's tab, else a
+     group's visible tab, else the first) — the diff replaces it;
   4. the active group.
 
   The diff opens **before** the file's text tabs close (`closeTextTabsFor`,
   dirty tabs are kept): closing a group's only tab first would make VS Code
-  remove the group. Only the groups that had a text tab before `vscode.diff`
-  are closed, so a tab opened meanwhile survives, and a text tab that is the
-  only tab of a group other than the diff's is kept (a pending file then
-  stays plain there). `hadTextTab` is recorded only if a tab was really
-  closed. Agent writes pass
-  `keepFocusIfInactive` (focus moves only when the diff lands in the active
+  remove the group. Only the groups that had a text tab before `vscode.diff` are
+  closed, so a tab opened meanwhile survives, and a text tab that is the only
+  tab of a group other than the diff's is kept (a pending file then stays plain
+  there). `hadTextTab` is recorded only if a tab was really closed. Agent writes
+  pass `keepFocusIfInactive` (focus moves only when the diff lands in the active
   group); burst dumps pass `preserveFocus`. `openDiff` returns whether a diff
-  tab is now shown. `isOpeningDiff` counts in-flight calls per path, since
-  calls for one file can overlap.
+  tab is now shown. `isOpeningDiff` counts in-flight calls per path, since calls
+  for one file can overlap.
+
 - **Tab recognition** — `isPendingDiffInput()`: a `TabInputTextDiff` whose
   `original.scheme` is the snapshot scheme. There is no panel registry;
   `findDiffTabs` / `closeDiffTabs` scan `vscode.window.tabGroups`.
+
 - **Diff tabs survive a window reload.**
   - The `onFileSystem:claude-diff-original` activation event lets VS Code
     activate the extension to resolve a restored left side.
   - The provider is registered synchronously at the top of `activateExtension`.
   - `closeStaleDiffTabs()` closes restored tabs whose snapshot is gone.
   - `DiffManager.dispose()` therefore never closes tabs.
+
 - **Closing a diff** — when they reopen the file (see "Diff state model" for
   when accept/revert do), accept/revert/clearAll/acceptAllPending **open the
   plain text editor first, then close the diff tab** (`reopenAsTextEditor` →
@@ -117,24 +122,27 @@ editor while keeping enough per-file state to accept or revert the whole file.
     title-bar button was clicked in an inactive group).
   - It also records the cursor/scroll of the visible `file:` editor for that
     path in that group, i.e. the diff's right side.
+
 - **Auto-routing** — if a pending file is opened as a plain text editor,
   `extension.ts` reopens it as its diff in that tab's group (`autoRouteTab` →
   `openDiff(path, { viewColumn })`, which closes the text tab after the diff
-  opens). A file whose snapshot was just removed is not rerouted, which is
-  what lets `reopenAsTextEditor` work. A newly **opened** tab is always
-  routed (`preserveFocus` if it opened in the background). A **changed** tab
-  only if it is its group's front tab, no `openDiff` for it is in flight
-  (`isOpeningDiff`) and the file has no diff tab yet (`hasDiffTab`): opening
-  the diff in front of a text tab reports it as `changed`, and a kept
-  only-tab-of-its-group text tab would otherwise pull focus on every save.
-  At activation `routeRestoredTextTabs` routes every restored clean text tab
-  of a pending file with `preserveFocus`, one file at a time (tabs looked up
-  again each time, since closing a group renumbers the rest), files not in
-  front of any group first, so each group's visible tab ends up in front.
+  opens). A file whose snapshot was just removed is not rerouted, which is what
+  lets `reopenAsTextEditor` work. A newly **opened** tab is always routed
+  (`preserveFocus` if it opened in the background). A **changed** tab only if it
+  is its group's front tab, no `openDiff` for it is in flight (`isOpeningDiff`)
+  and the file has no diff tab yet (`hasDiffTab`): opening the diff in front of
+  a text tab reports it as `changed`, and a kept only-tab-of-its-group text tab
+  would otherwise pull focus on every save. At activation
+  `routeRestoredTextTabs` routes every restored clean text tab of a pending file
+  with `preserveFocus`, one file at a time (tabs looked up again each time,
+  since closing a group renumbers the rest), files not in front of any group
+  first, so each group's visible tab ends up in front.
+
 - **Closing diff tabs never empties a group** — `closeTabs` first opens the
   plain file (no focus) in a group whose tabs would all be closed, and for a
-  diff with unsaved edits. Skipped if the file no longer exists, so Revert of
-  a created file can still remove its group.
+  diff with unsaved edits. Skipped if the file no longer exists, so Revert of a
+  created file can still remove its group.
+
 - **Stats** — `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library,
   compared on LF-normalised text):
   - decides whether a file has any change at all (`openDiff` drops pure-EOL
@@ -160,11 +168,13 @@ Accept and revert are intentionally asymmetric:
 
 - **Accept** just deletes the snapshot (the file on disk already holds the
   agent's version).
+
 - **Revert** writes the snapshot back to disk (or deletes a file the agent
   created).
+
 - After either, `handOver` opens the next pending file's diff **in the same
-  group** (explicit `viewColumn`, even if that file is open as text
-  elsewhere). The plain file is reopened in the diff's group only when:
+  group** (explicit `viewColumn`, even if that file is open as text elsewhere).
+  The plain file is reopened in the diff's group only when:
   1. no other file is pending;
   2. the diff has unsaved edits (Accept only — Revert overwrites them), since
      closing the last editor of a dirty document prompts save/discard;
@@ -176,8 +186,8 @@ Accept and revert are intentionally asymmetric:
   never empties (also for Revert of a created file). `openFirstDiff` skips
   pending files with no change left; if none shows a diff, the plain file is
   reopened instead. If the next diff was already open in another group, the
-  plain file is reopened too (without focus) so the current group survives.
-  This keeps a queue of reviews from piling up plain tabs.
+  plain file is reopened too (without focus) so the current group survives. This
+  keeps a queue of reviews from piling up plain tabs.
 
 `clearAll()` (git branch change) reopens only the active diff as a plain editor.
 
@@ -247,8 +257,8 @@ writes; they are not a separate detection pipeline.
 copy in, git, formatters etc. don't open diffs.
 
 - **Hooks** — `claudeHookInstaller.ts` adds one `UserPromptSubmit` and one
-  `Stop` hook to `~/.claude/settings.json` (plus `PostToolUse` in per-file
-  mode; `computeHookSettings` takes the mode `off` / `turn` / `perFile`).
+  `Stop` hook to `~/.claude/settings.json` (plus `PostToolUse` in per-file mode;
+  `computeHookSettings` takes the mode `off` / `turn` / `perFile`).
   - Timeout 30 s. The hook copies its stdin JSON into
     `~/.claude-diff/claude-events/`.
   - It must print nothing, because `UserPromptSubmit` stdout reaches Claude's
@@ -292,19 +302,19 @@ turn (Quarto preview, formatters) don't open diffs.
   `later`). Outside every turn window: not Claude's. Inside one:
   - **Claimed** — the file was named by a `PostToolUse` of the turn
     (`file_path`, or `notebook_path` for NotebookEdit): Claude's. Claims also
-    cover late change notices up to `claimGraceMs` (60 s) after the turn ends.
-    A `PostToolUse` whose session id has no open turn (a subagent reporting its
+    cover late change notices up to `claimGraceMs` (60 s) after the turn ends. A
+    `PostToolUse` whose session id has no open turn (a subagent reporting its
     own id, or a failed turn-start hook) claims in every open turn instead.
   - **Bash** — once the turn ran Bash, every write of that turn is Claude's (a
     command doesn't say which files it writes). Known gap: other programs'
     writes in such a turn count too.
   - Otherwise, while the turn is open: **`later`**.
   - Once the turn has ended unclaimed: not Claude's — unless its session has
-    never sent a `PostToolUse` (started before the hook was installed, or
-    hasn't edited anything yet), which falls back to the turn window rather
-    than silently dropping its edits.
-- **Holding** — a `later` write is stored in `ignoredWrites` like an ignored
-  one (earliest before-image per file), flagged `undecided`, logged as held.
+    never sent a `PostToolUse` (started before the hook was installed, or hasn't
+    edited anything yet), which falls back to the turn window rather than
+    silently dropping its edits.
+- **Holding** — a `later` write is stored in `ignoredWrites` like an ignored one
+  (earliest before-image per file), flagged `undecided`, logged as held.
   - `onDecisionsChanged` (on `PostToolUse`, `Stop`, a prompt closing an
     interrupted turn, a turn expiring at `maxOpenMs`) triggers
     `decideHeldWrites`, debounced per batch of events. It re-classifies only
@@ -317,13 +327,13 @@ turn (Quarto preview, formatters) don't open diffs.
     arriving during that read still finds the earliest before-image.
   - Switching modes decides the still-held writes under the mode now in force
     (`allExternalWrites`: all open). Already-ignored writes stay ignored.
-- **Latency** — `ClaudeHookSource.start()` `fs.watch`es the events folder
-  (50 ms debounce, 2 s poll as backup), so a claim opens the held diff ~0.3 s
-  after Claude's write.
+- **Latency** — `ClaudeHookSource.start()` `fs.watch`es the events folder (50 ms
+  debounce, 2 s poll as backup), so a claim opens the held diff ~0.3 s after
+  Claude's write.
 - **Cost** — one hook run (~0.23 s on Windows) per Edit/Write/Bash call.
   `PostToolUse` payloads include `tool_response` (file contents, command
-  output), so event files can be MB-sized; they are read once and deleted
-  after 30 min.
+  output), so event files can be MB-sized; they are read once and deleted after
+  30 min.
 - **Opt-in prompt** — `offerClaudeCodeHooks` (called at the end of activation)
   asks once per user whether to switch to this mode, because it edits the global
   `~/.claude/settings.json`.
@@ -442,7 +452,7 @@ custom-only.
 
   | Setting                                  | Purpose                                                                                                                                                                                                                                                                                                                                                                                              |
   | ---                                      | ---                                                                                                                                                                                                                                                                                                                                                                                                  |
-  | `claude-diff.editAttribution`            | `allExternalWrites` (default: every external write is an agent edit) or `claudeCodeHooks` (Claude turn-window attribution; installs hooks in `~/.claude/settings.json`) or `claudeCodeHooksPerFile` (per-file attribution; adds a `PostToolUse` hook)                                                                                                                                                                                                                              |
+  | `claude-diff.editAttribution`            | `allExternalWrites` (default: every external write is an agent edit) or `claudeCodeHooks` (Claude turn-window attribution; installs hooks in `~/.claude/settings.json`) or `claudeCodeHooksPerFile` (per-file attribution; adds a `PostToolUse` hook)                                                                                                                                                |
   | `claude-diff.supportedFileDetectionMode` | `defaultAndCustom` (default) or `customOnly`                                                                                                                                                                                                                                                                                                                                                         |
   | `claude-diff.supportedFileExtensions`    | Extra extensions to treat as text (dot optional)                                                                                                                                                                                                                                                                                                                                                     |
   | `claude-diff.supportedFilenames`         | Extra exact filenames to treat as text                                                                                                                                                                                                                                                                                                                                                               |
