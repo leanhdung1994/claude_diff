@@ -135,7 +135,7 @@ export function setupClaudeEditAttribution(
 
   const sync = (announce: boolean) => {
     const enabled = getMode() === 'claudeCodeHooks';
-    const result = applyClaudeAttributionHooks(enabled);
+    const result = applyClaudeAttributionHooks(enabled ? 'turn' : 'off');
     log(`attribution:hooks ${enabled ? 'enable' : 'disable'} → ${result}`);
     setPolling(enabled);
     if (result === 'parseError') {

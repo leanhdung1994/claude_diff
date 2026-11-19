@@ -214,7 +214,7 @@ console.log('settings.json installer');
     PreToolUse: [{ matcher: '^Bash$', hooks: [{ type: 'command', command: 'my-guard.sh' }] }],
     Stop: [{ hooks: [{ type: 'command', command: 'notify-send done' }] }] } };
   const raw = JSON.stringify(user, null, 2);
-  const r1 = I.computeHookSettings(raw, true, 'linux');
+  const r1 = I.computeHookSettings(raw, 'turn', 'linux');
   const s1 = JSON.parse(r1.content);
   ok(r1.changed, 'install changes settings');
   ok(s1.model === 'opus' && s1.hooks.PreToolUse.length === 1 && s1.hooks.Stop.length === 2,
@@ -224,29 +224,47 @@ console.log('settings.json installer');
   ok(ups.length === 1 && ups[0].matcher === undefined && ups[0].hooks[0].timeout === 30,
     'UserPromptSubmit installed without matcher, timeout 30');
   ok(s1.hooks.Stop[1].hooks[0].timeout === 30, 'Stop installed with timeout 30');
-  ok(!I.computeHookSettings(r1.content, true, 'linux').changed, 'second install is a no-op (no rewrite)');
-  const r3 = JSON.parse(I.computeHookSettings(r1.content, false, 'linux').content);
+  ok(!I.computeHookSettings(r1.content, 'turn', 'linux').changed, 'second install is a no-op (no rewrite)');
+  const r3 = JSON.parse(I.computeHookSettings(r1.content, 'off', 'linux').content);
   ok(JSON.stringify(r3) === JSON.stringify(user), 'uninstall restores exactly the original config');
 
-  ok(I.computeHookSettings('{ broken', true, 'linux').parseError, 'malformed settings.json → refuse to write');
+  ok(I.computeHookSettings('{ broken', 'turn', 'linux').parseError, 'malformed settings.json → refuse to write');
   {
-    const r = I.computeHookSettings('{ broken', false, 'linux');
+    const r = I.computeHookSettings('{ broken', 'off', 'linux');
     ok(!r.parseError && !r.changed, 'feature off + unparseable file without our hook → silent no-op (startup case)');
   }
-  ok(I.computeHookSettings('{ broken ' + 'claude-diff/claude-events', false, 'linux').parseError,
+  ok(I.computeHookSettings('{ broken ' + 'claude-diff/claude-events', 'off', 'linux').parseError,
     'feature off + unparseable file that contains our hook → refuse to write');
   {
     const withBom = '\uFEFF' + raw;
-    const rb = I.computeHookSettings(withBom, true, 'linux');
+    const rb = I.computeHookSettings(withBom, 'turn', 'linux');
     ok(!rb.parseError && rb.changed, 'UTF-8 BOM settings.json parses (Notepad/PowerShell)');
     ok(rb.content.startsWith('\uFEFF') && JSON.parse(rb.content.slice(1)).model === 'opus', 'BOM preserved, settings kept');
-    const ru = I.computeHookSettings(rb.content, false, 'linux').content;
+    const ru = I.computeHookSettings(rb.content, 'off', 'linux').content;
     ok(ru.startsWith('\uFEFF') && JSON.stringify(JSON.parse(ru.slice(1))) === JSON.stringify(user),
       'BOM file: uninstall restores original settings');
   }
-  const w = JSON.parse(I.computeHookSettings('', true, 'win32').content);
+  const w = JSON.parse(I.computeHookSettings('', 'turn', 'win32').content);
   ok(w.hooks.UserPromptSubmit[0].hooks[0].shell === 'powershell' && w.hooks.UserPromptSubmit[0].hooks[0].timeout === 30,
     'Windows uses powershell hook, timeout 30');
+
+  // Per-file mode: one more entry; switching modes touches only our entries.
+  const userPost = { hooks: { PostToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: 'prettier' }] }] } };
+  const rawPost = JSON.stringify(userPost, null, 2);
+  const pf = I.computeHookSettings(rawPost, 'perFile', 'linux');
+  const sp = JSON.parse(pf.content);
+  const ours = sp.hooks.PostToolUse.filter(g => g.hooks[0].command.includes('claude-events'));
+  ok(sp.hooks.PostToolUse.length === 2 && ours.length === 1 && ours[0].matcher === 'Edit|Write|MultiEdit|NotebookEdit|Bash',
+    'perFile adds PostToolUse (Edit|Write|MultiEdit|NotebookEdit|Bash) next to the user\'s own');
+  ok(sp.hooks.UserPromptSubmit.length === 1 && sp.hooks.Stop.length === 1, 'perFile keeps UserPromptSubmit and Stop');
+  ok(!I.computeHookSettings(pf.content, 'perFile', 'linux').changed, 'second perFile install is a no-op');
+  const back = JSON.parse(I.computeHookSettings(pf.content, 'turn', 'linux').content);
+  ok(back.hooks.PostToolUse.length === 1 && back.hooks.PostToolUse[0].hooks[0].command === 'prettier',
+    'perFile → turn removes only our PostToolUse entry');
+  const off = I.computeHookSettings(I.computeHookSettings(pf.content, 'turn', 'linux').content, 'off', 'linux').content;
+  ok(JSON.stringify(JSON.parse(off)) === JSON.stringify(userPost), 'perFile → turn → off restores the original');
+  const offDirect = I.computeHookSettings(pf.content, 'off', 'linux').content;
+  ok(JSON.stringify(JSON.parse(offDirect)) === JSON.stringify(userPost), 'off (uninstall) removes all three entries');
 }
 
 (async () => {
@@ -259,7 +277,7 @@ console.log('settings.json installer');
   async function endToEnd(label, platform, shell, homeVar) {
     console.log(`End-to-end (${label}): real hook command → event files → source`);
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
-    const cmd = JSON.parse(I.computeHookSettings('', true, platform).content).hooks.UserPromptSubmit[0].hooks[0].command;
+    const cmd = JSON.parse(I.computeHookSettings('', 'turn', platform).content).hooks.UserPromptSubmit[0].hooks[0].command;
     const stdout = cp.execSync(cmd, { input: Buffer.from(JSON.stringify(payload), 'utf8'),
       env: { ...process.env, [homeVar]: home }, shell });
     ok(stdout.length === 0, `${label}: hook prints nothing (UserPromptSubmit stdout would reach Claude's context)`);
@@ -271,6 +289,19 @@ console.log('settings.json installer');
     const src = new S.ClaudeHookSource(new A.ClaudeAttribution({ workspaceFolders: () => [n(ws)] }), dir);
     ok(await src.isClaudeWrite(path.join(ws, 'ghi chú.md'), Date.now()), `${label}: write during the recorded turn attributed`);
     ok(src.hasSeenAnyEvent(), `${label}: source reports hook is alive`);
+
+    // PostToolUse payloads carry tool_response (file contents, command output).
+    const postCmd = JSON.parse(I.computeHookSettings('', 'perFile', platform).content).hooks.PostToolUse[0].hooks[0].command;
+    const big = { hook_event_name: 'PostToolUse', session_id: 's', cwd: ws, tool_name: 'Write',
+      tool_input: { file_path: path.join(ws, 'ghi chú.md'), content: 'é'.repeat(1_000_000) },
+      tool_response: { originalFile: 'ư'.repeat(1_000_000) } };
+    const t0 = Date.now();
+    cp.execSync(postCmd, { input: Buffer.from(JSON.stringify(big), 'utf8'), env: { ...process.env, [homeVar]: home }, shell });
+    const ms = Date.now() - t0;
+    const postFile = fs.readdirSync(dir).find(f => f !== files[0]);
+    const evt = A.parseHookEvent(fs.readFileSync(path.join(dir, postFile), 'utf8'), Date.now());
+    ok(evt && evt.event === 'PostToolUse' && evt.filePath === n(path.join(ws, 'ghi chú.md')),
+      `${label}: ~4 MB PostToolUse payload stored and parsed (${ms} ms)`);
   }
 
   if (isWin) {

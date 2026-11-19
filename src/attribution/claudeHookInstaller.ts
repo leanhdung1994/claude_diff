@@ -3,7 +3,8 @@
  *
  * Adds/removes the attribution hooks in ~/.claude/settings.json: one
  * `UserPromptSubmit` and one `Stop` hook, which mark the start and end of each
- * Claude turn (see claudeAttribution.ts).
+ * Claude turn (see claudeAttribution.ts), plus in per-file mode one
+ * `PostToolUse` hook for the file-editing tools and Bash.
  *
  * The hook itself is deliberately dumb: it copies Claude Code's hook stdin JSON
  * into one file under ~/.claude-diff/claude-events/. No Python/Node needed;
@@ -27,8 +28,13 @@ const EVENTS_MARKER = 'claude-events';
 const OWNER_MARKER = 'claude-diff';
 /** Generous: a slow PowerShell start must never lose a turn-start event. */
 const HOOK_TIMEOUT_S = 30;
-/** Hook events this extension installs an entry for. */
-const OWNED_EVENTS = ['UserPromptSubmit', 'Stop'] as const;
+/** Hook events this extension may install an entry for (all removed when off). */
+const OWNED_EVENTS = ['UserPromptSubmit', 'Stop', 'PostToolUse'] as const;
+/** Tools whose PostToolUse tells which file Claude edited (Bash: that it ran a command). */
+const POST_TOOL_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit|Bash';
+
+/** Which attribution hooks to have installed. */
+export type AttributionHookMode = 'off' | 'turn' | 'perFile';
 
 export function getClaudeEventsDir(): string {
   return path.join(os.homedir(), '.claude-diff', EVENTS_MARKER);
@@ -85,24 +91,26 @@ function isOurs(group: HookGroup): boolean {
   );
 }
 
-function desiredGroups(platform: string): Partial<Record<string, HookGroup>> {
+function desiredGroups(platform: string, mode: AttributionHookMode): Partial<Record<string, HookGroup>> {
+  if (mode === 'off') { return {}; }
   const cmd = hookCommand(platform);
   return {
     UserPromptSubmit: { hooks: [cmd] },
     Stop: { hooks: [cmd] },
+    ...(mode === 'perFile' ? { PostToolUse: { matcher: POST_TOOL_MATCHER, hooks: [cmd] } } : {}),
   };
 }
 
 /** Pure: compute the new settings.json content. */
 export function computeHookSettings(
   raw: string,
-  enabled: boolean,
+  mode: AttributionHookMode,
   platform: string = process.platform
 ): { content: string; changed: boolean; parseError?: boolean } {
   // Disabling with none of our entries in the file: nothing to remove, so
   // don't even parse it. (This runs on every startup while the feature is
   // off; it must stay silent for files we can't parse.)
-  if (!enabled && !(raw.includes(OWNER_MARKER) && raw.includes(EVENTS_MARKER))) {
+  if (mode === 'off' && !(raw.includes(OWNER_MARKER) && raw.includes(EVENTS_MARKER))) {
     return { content: raw, changed: false };
   }
 
@@ -131,12 +139,12 @@ export function computeHookSettings(
     ? { ...(settings['hooks'] as Record<string, unknown>) }
     : {};
 
-  const desired = desiredGroups(platform);
+  const desired = desiredGroups(platform, mode);
   for (const eventName of OWNED_EVENTS) {
     const list = Array.isArray(hooks[eventName]) ? (hooks[eventName] as HookGroup[]) : [];
     const others = list.filter(g => !isOurs(g));
     const group = desired[eventName];
-    const next = enabled && group ? [...others, group] : others;
+    const next = group ? [...others, group] : others;
     if (next.length > 0) {
       hooks[eventName] = next;
     } else {
@@ -156,7 +164,8 @@ export function computeHookSettings(
 
 export type HookApplyResult = 'unchanged' | 'installed' | 'removed' | 'parseError' | 'writeError';
 
-export function applyClaudeAttributionHooks(enabled: boolean): HookApplyResult {
+export function applyClaudeAttributionHooks(mode: AttributionHookMode): HookApplyResult {
+  const enabled = mode !== 'off';
   const settingsPath = getClaudeSettingsPath();
   let raw = '';
   try {
@@ -165,7 +174,7 @@ export function applyClaudeAttributionHooks(enabled: boolean): HookApplyResult {
     if (!enabled) { return 'unchanged'; }
   }
 
-  const result = computeHookSettings(raw, enabled);
+  const result = computeHookSettings(raw, mode);
   if (result.parseError) { return 'parseError'; }
   if (!result.changed) { return 'unchanged'; }
 

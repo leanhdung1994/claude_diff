@@ -27,7 +27,7 @@ function step(label: string, fn: () => unknown): void {
   }
 }
 
-step('remove attribution hooks', () => applyClaudeAttributionHooks(false));
+step('remove attribution hooks', () => applyClaudeAttributionHooks('off'));
 step('remove sound hooks', () => applySoundNotifications(false));
 // ~/.claude-diff holds only the extension's hook event files.
 step('remove events folder', () => fs.rmSync(path.dirname(getClaudeEventsDir()), { recursive: true, force: true }));
