@@ -184,11 +184,13 @@
           "type": "string",
           "enum": [
             "allExternalWrites",
-            "claudeCodeHooks"
+            "claudeCodeHooks",
+            "claudeCodeHooksPerFile"
           ],
           "enumDescriptions": [
             "Open a diff for every file written outside VS Code's editor, whoever wrote it. No hooks needed.",
-            "Only count writes made during a Claude Code turn. Installs UserPromptSubmit/Stop hooks in ~/.claude/settings.json."
+            "Only count writes made during a Claude Code turn. Installs UserPromptSubmit/Stop hooks in ~/.claude/settings.json.",
+            "Only count files Claude edits with its file tools during a turn; in a turn where Claude runs a Bash command, every write of that turn counts. Installs UserPromptSubmit/Stop/PostToolUse hooks in ~/.claude/settings.json (adds about 0.2 s per edit)."
           ],
           "default": "allExternalWrites",
           "order": 0,

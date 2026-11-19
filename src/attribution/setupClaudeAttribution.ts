@@ -1,12 +1,15 @@
 /**
  * setupClaudeAttribution.ts
  *
- * VS Code glue for the "claudeCodeHooks" attribution mode:
+ * VS Code glue for the "claudeCodeHooks" (turn window) and
+ * "claudeCodeHooksPerFile" attribution modes:
  *  - installs/removes the hooks when the setting changes,
  *  - provides the EditAttribution gate used by WorkspaceWatcher,
- *  - polls the hook events folder while the mode is on, so a `Stop` whose turn
+ *  - watches the hook events folder while a mode is on, so a `Stop` whose turn
  *    start was never recorded is noticed when the turn ends, and the writes the
  *    gate ignored during that turn are recovered as diffs,
+ *  - in per-file mode, asks the watcher to classify its held writes again
+ *    whenever a claim, a Bash run or a turn end may have decided them,
  *  - warns once if writes are being ignored while no hook event ever arrived
  *    (hook not installed, or a Claude session started before the install).
  */
@@ -16,19 +19,34 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClaudeAttribution, StopWithoutStartInfo, normalizeFsPath } from './claudeAttribution';
 import { ClaudeHookSource } from './claudeHookSource';
-import { applyClaudeAttributionHooks, getClaudeSettingsPath } from './claudeHookInstaller';
-import type { EditAttribution } from '../watcher/workspaceWatcher';
+import { AttributionHookMode, applyClaudeAttributionHooks, getClaudeSettingsPath } from './claudeHookInstaller';
+import type { AgentWriteVerdict, EditAttribution } from '../watcher/workspaceWatcher';
+import type { WriteVerdict } from './claudeAttribution';
 
 const SECTION = 'claude-diff';
 const MODE_KEY = 'editAttribution';
 const POLL_INTERVAL_MS = 2000;
-type Mode = 'allExternalWrites' | 'claudeCodeHooks';
+/** Coalesces the decisions-changed notices of one batch of hook events. */
+const RECLASSIFY_DEBOUNCE_MS = 20;
+type Mode = 'allExternalWrites' | 'claudeCodeHooks' | 'claudeCodeHooksPerFile';
 type RecoveryHandler = (match: (absPath: string, eventAt: number) => boolean) => Promise<number>;
 /** globalState: the user answered the one-time "only Claude's edits?" offer. */
 const OFFER_ANSWERED_KEY = 'claude-diff.claudeCodeHooksOfferAnswered';
 
 function getMode(): Mode {
   return vscode.workspace.getConfiguration(SECTION).get<Mode>(MODE_KEY, 'allExternalWrites');
+}
+
+function hookModeFor(mode: Mode): AttributionHookMode {
+  switch (mode) {
+    case 'claudeCodeHooks': return 'turn';
+    case 'claudeCodeHooksPerFile': return 'perFile';
+    default: return 'off';
+  }
+}
+
+function toAgentVerdict(v: WriteVerdict): AgentWriteVerdict {
+  return v === 'claude' ? 'agent' : v === 'later' ? 'later' : 'notAgent';
 }
 
 /** Canonical on-disk path, so a mapped drive and its UNC path compare equal. */
@@ -96,9 +114,29 @@ export function setupClaudeEditAttribution(
       log(`attribution: Claude turn cwd ${cwd} is unrelated to workspace folder ${root} — its turns don't cover files here`);
     },
     onStopWithoutStart: info => { void recoverMissedTurn(info); },
+    perFile: () => getMode() === 'claudeCodeHooksPerFile',
+    onDecisionsChanged: () => scheduleReclassify(),
   });
   const source = new ClaudeHookSource(attribution);
   let warnedNoEvents = false;
+
+  /**
+   * Per-file mode: writes held `later` may be decidable now. Open diffs for
+   * those that count as Claude's; the rest stay remembered (still undecided,
+   * or ignored for good). One run per batch of hook events.
+   */
+  let reclassifyTimer: NodeJS.Timeout | undefined;
+  function scheduleReclassify(): void {
+    if (getMode() !== 'claudeCodeHooksPerFile' || reclassifyTimer) { return; }
+    reclassifyTimer = setTimeout(() => {
+      reclassifyTimer = undefined;
+      if (!recover) { return; }
+      void recover((absPath, eventAt) => attribution.classifyWrite(absPath, eventAt) === 'claude')
+        .then(opened => { if (opened > 0) { log(`attribution: opened ${opened} held write(s) now known to be Claude's`); } })
+        .catch(() => {});
+    }, RECLASSIFY_DEBOUNCE_MS);
+  }
+  context.subscriptions.push({ dispose: () => { if (reclassifyTimer) { clearTimeout(reclassifyTimer); } } });
 
   async function recoverMissedTurn(info: StopWithoutStartInfo): Promise<void> {
     if (!attribution.cwdMatchesWorkspace(info.cwd)) { return; } // another project's session
@@ -134,10 +172,17 @@ export function setupClaudeEditAttribution(
   context.subscriptions.push({ dispose: () => setPolling(false) });
 
   const sync = (announce: boolean) => {
-    const enabled = getMode() === 'claudeCodeHooks';
-    const result = applyClaudeAttributionHooks(enabled ? 'turn' : 'off');
-    log(`attribution:hooks ${enabled ? 'enable' : 'disable'} → ${result}`);
+    const mode = getMode();
+    const hookMode = hookModeFor(mode);
+    const enabled = hookMode !== 'off';
+    const result = applyClaudeAttributionHooks(hookMode);
+    log(`attribution:hooks ${hookMode} → ${result}`);
     setPolling(enabled);
+    // Writes held under per-file mode are decided by the rule now in force
+    // (the turn window opens the ones made during a turn).
+    if (enabled && recover) {
+      void recover((absPath, eventAt) => attribution.classifyWrite(absPath, eventAt) === 'claude').catch(() => {});
+    }
     if (result === 'parseError') {
       void vscode.window.showErrorMessage(
         'Diff Review for Claude Code: ~/.claude/settings.json is not valid JSON, so the Claude Code hook was not ' +
@@ -147,8 +192,12 @@ export function setupClaudeEditAttribution(
       void vscode.window.showErrorMessage('Diff Review for Claude Code: could not write ~/.claude/settings.json.');
     } else if (result === 'installed' && announce) {
       void vscode.window.showInformationMessage(
-        'Diff Review for Claude Code: Claude Code hook installed. Only file changes made during a Claude turn will open ' +
-        'diffs. Restart any Claude session that was already running so it picks up the hook.'
+        hookMode === 'perFile'
+          ? 'Diff Review for Claude Code: Claude Code hooks installed. Only files Claude edits (or writes during a ' +
+            'turn that runs a command) will open diffs. Restart any Claude session that was already running so it ' +
+            'picks up the hooks; until then its turns count every write.'
+          : 'Diff Review for Claude Code: Claude Code hook installed. Only file changes made during a Claude turn will ' +
+            'open diffs. Restart any Claude session that was already running so it picks up the hook.'
       );
     }
   };
@@ -161,8 +210,12 @@ export function setupClaudeEditAttribution(
   );
 
   return {
-    isEnabled: () => getMode() === 'claudeCodeHooks',
-    isAgentWrite: (absPath, eventAt) => source.isClaudeWrite(absPath, eventAt),
+    isEnabled: () => hookModeFor(getMode()) !== 'off',
+    classifyWrite: async (absPath, eventAt) => toAgentVerdict(await source.classifyWrite(absPath, eventAt)),
+    classifyWriteNow: (absPath, eventAt) => toAgentVerdict(attribution.classifyWrite(absPath, eventAt)),
+    onUndecidedWrite: (absPath) => {
+      log(`attribution:held write until Claude's tool events decide it ${absPath}`);
+    },
     onIgnoredWrite: (absPath) => {
       log(`attribution:ignored non-Claude write ${absPath}`);
       if (!warnedNoEvents && !source.hasSeenAnyEvent()) {

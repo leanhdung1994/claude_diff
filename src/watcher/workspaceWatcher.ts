@@ -35,15 +35,27 @@ interface ExternalWriteOptions {
 }
 
 /**
+ * The gate's verdict on one write. `later`: not decidable yet (per-file mode,
+ * the turn could still claim the file); the write is kept like an ignored one
+ * and reclaimed through the recovery handler once it is decided.
+ */
+export type AgentWriteVerdict = 'agent' | 'notAgent' | 'later';
+
+/**
  * Optional gate: decides whether an external write was made by the agent.
  * When absent or disabled, every external write is treated as an agent edit
  * (the default `allExternalWrites` mode, which needs no hooks).
  */
 export interface EditAttribution {
   isEnabled(): boolean;
-  isAgentWrite(absPath: string, eventAt: number): Promise<boolean>;
+  /** Reads any new evidence first, then decides. */
+  classifyWrite(absPath: string, eventAt: number): Promise<AgentWriteVerdict>;
+  /** Decides from the evidence already read (no I/O), for writes remembered earlier. */
+  classifyWriteNow(absPath: string, eventAt: number): AgentWriteVerdict;
   /** Called when a real change was ignored as not-the-agent's. */
   onIgnoredWrite?(absPath: string): void;
+  /** Called when a real change is held until the gate can decide it. */
+  onUndecidedWrite?(absPath: string): void;
   /**
    * Lets the gate reclaim writes it wrongly ignored (e.g. Claude's turn-start
    * hook failed, noticed only at its Stop). The handler opens diffs for every
@@ -523,6 +535,14 @@ export class WorkspaceWatcher {
 
       if (!this.diffManager.hasPendingDiff(absPath)) {
         if (!(await this.isAgentWrite(absPath, eventAt, { before: oldContentRaw!, existed: true, eventAt }))) { return; }
+        // An earlier write of this file may be held undecided and now count
+        // as the agent's too (per-file mode: the claim arrived meanwhile). Its
+        // before-image predates this one, which already contains that write.
+        const earlier = this.takeEarliestAgentWrite(absPath);
+        if (earlier) {
+          this.resolveOrHold(absPath, earlier.before, newContentRaw, earlier.existed, burstHold);
+          return;
+        }
         this.resolveOrHold(absPath, oldContentRaw!, newContentRaw, true, burstHold);
       } else {
         // Already pending: its snapshot (left side) stays the version before
@@ -548,14 +568,31 @@ export class WorkspaceWatcher {
 
   private async isAgentWrite(absPath: string, eventAt: number, ignored: IgnoredWrite): Promise<boolean> {
     if (!this.attribution?.isEnabled()) { return true; }
+    let verdict: AgentWriteVerdict;
     try {
-      if (await this.attribution.isAgentWrite(absPath, eventAt)) { return true; }
+      verdict = await this.attribution.classifyWrite(absPath, eventAt);
     } catch {
       return true; // fail open: a broken gate must not hide agent edits
     }
+    if (verdict === 'agent') { return true; }
+    // Ignored or undecided: either way keep the before-image, so the write
+    // can still be reclaimed (missed turn start, or a later claim / turn end).
     this.rememberIgnoredWrite(absPath, ignored);
-    this.attribution.onIgnoredWrite?.(absPath);
+    if (verdict === 'later') {
+      this.attribution.onUndecidedWrite?.(absPath);
+    } else {
+      this.attribution.onIgnoredWrite?.(absPath);
+    }
     return false;
+  }
+
+  /** Removes and returns the earliest remembered write of `absPath` the gate now counts as the agent's. */
+  private takeEarliestAgentWrite(absPath: string): IgnoredWrite | undefined {
+    const list = this.ignoredWrites.get(absPath);
+    if (!list || !this.attribution) { return undefined; }
+    const hit = list.find(w => this.attribution!.classifyWriteNow(absPath, w.eventAt) === 'agent');
+    if (hit) { this.ignoredWrites.delete(absPath); }
+    return hit;
   }
 
   private rememberIgnoredWrite(absPath: string, write: IgnoredWrite): void {
