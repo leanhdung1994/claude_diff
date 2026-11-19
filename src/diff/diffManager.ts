@@ -73,8 +73,12 @@ export class DiffManager implements vscode.Disposable {
    * trigger the "edited back to the original" cleanup for the same file.
    */
   private readonly resolving = new Set<string>();
-  /** Paths whose openDiff() is in flight. */
-  private readonly opening = new Set<string>();
+  /**
+   * Number of openDiff() calls in flight per path. A count, not a set: calls
+   * for one file can overlap (watcher + auto-route), and the first to finish
+   * must not clear the guard while another is still opening.
+   */
+  private readonly opening = new Map<string, number>();
   /**
    * Pending files that were open as a text tab when their diff opened (the
    * diff replaced it). Accept/Revert give that tab back even when another
@@ -116,12 +120,13 @@ export class DiffManager implements vscode.Disposable {
 
   /** True while openDiff() is opening this file's diff (auto-route skips it). */
   isOpeningDiff(filePath: string): boolean {
-    return this.opening.has(normalizePath(filePath));
+    return (this.opening.get(normalizePath(filePath)) ?? 0) > 0;
   }
 
   /**
    * Show a pending file's diff. Group, first match wins:
-   * 1. the group of an existing diff tab of this file (no second copy);
+   * 1. the group of an existing diff tab of this file (no second copy),
+   *    preferring one in `options.viewColumn`;
    * 2. `options.viewColumn`;
    * 3. the group of a text tab showing the file — the diff replaces it;
    * 4. the active group.
@@ -140,11 +145,16 @@ export class DiffManager implements vscode.Disposable {
     options?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean; keepFocusIfInactive?: boolean }
   ): Promise<boolean> {
     const absPath = normalizePath(filePath);
-    this.opening.add(absPath);
+    this.opening.set(absPath, (this.opening.get(absPath) ?? 0) + 1);
     try {
       return await this.openDiffInner(absPath, options);
     } finally {
-      this.opening.delete(absPath);
+      const left = (this.opening.get(absPath) ?? 1) - 1;
+      if (left > 0) {
+        this.opening.set(absPath, left);
+      } else {
+        this.opening.delete(absPath);
+      }
     }
   }
 
@@ -178,11 +188,15 @@ export class DiffManager implements vscode.Disposable {
     }
 
     const textTabs = this.findTextTabs(absPath);
-    if (textTabs.length > 0) { this.hadTextTab.add(absPath); }
+    // Only these groups' text tabs are closed afterwards: a tab the user opens
+    // while the diff is opening is left alone (it may be its group's only tab).
+    const textTabGroups = new Set(textTabs.map((tab) => tab.group.viewColumn));
     const textTab = textTabs.find((tab) => tab.group.isActive)
       ?? textTabs.find((tab) => tab.isActive)
       ?? textTabs[0];
-    const viewColumn = this.findDiffTabs(absPath)[0]?.group.viewColumn
+    const diffTabs = this.findDiffTabs(absPath);
+    const existingDiff = diffTabs.find((tab) => tab.group.viewColumn === options?.viewColumn) ?? diffTabs[0];
+    const viewColumn = existingDiff?.group.viewColumn
       ?? options?.viewColumn
       ?? textTab?.group.viewColumn;
     const intoInactiveGroup = viewColumn !== undefined
@@ -208,7 +222,10 @@ export class DiffManager implements vscode.Disposable {
       this._onDidChangeDiffs.fire();
       return false;
     }
-    await this.closeTextTabsFor(absPath);
+    // Recorded only now that the diff is confirmed: recording before the
+    // awaits could re-add an entry that Accept/Revert cleared meanwhile.
+    if (textTabs.length > 0) { this.hadTextTab.add(absPath); }
+    await this.closeTextTabsFor(absPath, textTabGroups);
     this._onDidChangeDiffs.fire();
     return true;
   }
@@ -226,14 +243,17 @@ export class DiffManager implements vscode.Disposable {
   }
 
   /**
-   * Close every text tab of this file once its diff is open, so the file
-   * isn't shown twice.
+   * Close this file's text tabs in the given groups once its diff is open, so
+   * the file isn't shown twice. (Looked up again by group: Tab objects taken
+   * before vscode.diff may be stale; a group holds at most one text tab per
+   * file.)
    */
-  private async closeTextTabsFor(absPath: string): Promise<void> {
+  private async closeTextTabsFor(absPath: string, groups: Set<vscode.ViewColumn>): Promise<void> {
     // Preserve unsaved user edits. Closing a dirty text tab here would trigger
     // VS Code's save/discard dialog while an external change is being routed
     // to the diff editor.
-    const targets = this.findTextTabs(absPath).filter((tab) => !tab.isDirty);
+    const targets = this.findTextTabs(absPath)
+      .filter((tab) => !tab.isDirty && groups.has(tab.group.viewColumn));
     if (targets.length === 0) { return; }
     try {
       await vscode.window.tabGroups.close(targets);
@@ -246,6 +266,8 @@ export class DiffManager implements vscode.Disposable {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) {
       this.snapshots.set(absPath, { content, fileExistedBefore });
+      // A new review: whatever was recorded for an earlier one doesn't apply.
+      this.hadTextTab.delete(absPath);
       void this.store.save(this.snapshots);
       this._onDidChangeDiffs.fire();
     }
@@ -259,17 +281,17 @@ export class DiffManager implements vscode.Disposable {
     const absPath = normalizePath(filePath);
     if (!this.snapshots.has(absPath)) { return; }
 
-    const nextTarget = this.nextPendingAfter(absPath);
+    const queue = this.pendingAfter(absPath);
     const view = this.captureViewState(absPath);
     // Unsaved edits in the diff: closing the last editor showing that
     // document would make VS Code ask to save or discard, so keep it open.
     const hasUnsavedEdits = this.findDiffTabs(absPath).some((tab) => tab.isDirty);
-    const reopen = !nextTarget || hasUnsavedEdits || this.hadTextTab.has(absPath);
+    const reopen = queue.length === 0 || hasUnsavedEdits || this.hadTextTab.has(absPath);
 
     this.resolving.add(absPath);
     try {
       this.forget(absPath);
-      await this.handOver(absPath, view, nextTarget, reopen);
+      await this.handOver(absPath, view, queue, reopen);
     } finally {
       this.resolving.delete(absPath);
     }
@@ -285,11 +307,11 @@ export class DiffManager implements vscode.Disposable {
     const snapshot = this.snapshots.get(absPath);
     if (!snapshot) { return; }
 
-    const nextTarget = this.nextPendingAfter(absPath);
+    const queue = this.pendingAfter(absPath);
     const view = this.captureViewState(absPath);
     // No unsaved-edits case: the revert overwrites and saves the document.
     // A file the agent created is deleted, so there is nothing to reopen.
-    const reopen = snapshot.fileExistedBefore && (!nextTarget || this.hadTextTab.has(absPath));
+    const reopen = snapshot.fileExistedBefore && (queue.length === 0 || this.hadTextTab.has(absPath));
 
     this.resolving.add(absPath);
     try {
@@ -300,7 +322,7 @@ export class DiffManager implements vscode.Disposable {
       }
 
       this.forget(absPath);
-      await this.handOver(absPath, view, nextTarget, reopen);
+      await this.handOver(absPath, view, queue, reopen);
     } finally {
       this.resolving.delete(absPath);
     }
@@ -316,25 +338,47 @@ export class DiffManager implements vscode.Disposable {
    *   then the diff closes, then the next diff opens in front of it.
    * - otherwise: the next diff opens first and the old diff closes after, so
    *   the group never empties (VS Code would remove it and move focus to
-   *   another group). If no next diff could be shown, fall back to the plain
-   *   file (a no-op when it was deleted).
+   *   another group). The plain file still opens (without taking focus from
+   *   the next diff) when that diff was already open in another group, and
+   *   instead of it when no pending file has a diff left to show. Both are
+   *   no-ops for a deleted file.
    */
   private async handOver(
     absPath: string,
     view: ViewState | undefined,
-    nextTarget: string | undefined,
+    queue: string[],
     reopen: boolean
   ): Promise<void> {
     const viewColumn = view?.viewColumn;
     if (reopen) {
       await this.reopenAsTextEditor(absPath, view);
       await this.closeDiffTabs(absPath);
-      if (nextTarget) { await this.openDiff(nextTarget, { viewColumn }); }
+      await this.openFirstDiff(queue, viewColumn);
       return;
     }
-    const shown = nextTarget ? await this.openDiff(nextTarget, { viewColumn }) : false;
-    if (!shown) { await this.reopenAsTextEditor(absPath, view); }
+    const shown = await this.openFirstDiff(queue, viewColumn);
+    if (!shown) {
+      await this.reopenAsTextEditor(absPath, view);
+    } else if (
+      viewColumn !== undefined &&
+      !this.findDiffTabs(shown).some((tab) => tab.group.viewColumn === viewColumn)
+    ) {
+      await this.reopenAsTextEditor(absPath, view, { preserveFocus: true });
+    }
     await this.closeDiffTabs(absPath);
+  }
+
+  /**
+   * Open the first file of `queue` that still has a diff to show (a file with
+   * no change left is dropped by openDiff and skipped here).
+   * @returns The normalized path whose diff is shown, if any.
+   */
+  private async openFirstDiff(queue: string[], viewColumn: vscode.ViewColumn | undefined): Promise<string | undefined> {
+    for (const candidate of queue) {
+      if (!this.snapshots.has(candidate)) { continue; }
+      if (await this.openDiff(candidate, { viewColumn })) { return candidate; }
+    }
+    return undefined;
   }
 
   /** Drop a file's pending state: snapshot (persisted) and tab bookkeeping. */
@@ -587,12 +631,12 @@ export class DiffManager implements vscode.Disposable {
     }
   }
 
-  private nextPendingAfter(absPath: string): string | undefined {
+  /** The other pending files, in review order, starting after `absPath`. */
+  private pendingAfter(absPath: string): string[] {
     const pending = this.getPendingFiles();
-    const idx = pending.findIndex(p => normalizePath(p) === absPath);
-    return pending.length > 1 && idx !== -1
-      ? pending[(idx + 1) % pending.length]
-      : undefined;
+    const idx = pending.indexOf(absPath);
+    if (idx === -1) { return []; }
+    return [...pending.slice(idx + 1), ...pending.slice(0, idx)];
   }
 
   /**

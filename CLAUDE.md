@@ -78,7 +78,8 @@ editor while keeping enough per-file state to accept or revert the whole file.
     of its group is replaced in place by the plain file with `preserveFocus`,
     and a background diff tab is just closed.
 - **Where a diff opens** — `openDiff` picks the group, first match wins:
-  1. the group of an existing diff tab of the file (never a second copy);
+  1. the group of an existing diff tab of the file (never a second copy),
+     preferring one in the explicit `viewColumn`;
   2. an explicit `viewColumn` (auto-route, the next file after
      Accept/Revert);
   3. the group of a text tab showing the file (the active group's tab, else
@@ -87,9 +88,12 @@ editor while keeping enough per-file state to accept or revert the whole file.
 
   The diff opens **before** the file's text tabs close (`closeTextTabsFor`,
   dirty tabs are kept): closing a group's only tab first would make VS Code
-  remove the group. Agent writes pass `keepFocusIfInactive` (focus moves only
-  when the diff lands in the active group); burst dumps pass `preserveFocus`.
-  `openDiff` returns whether a diff tab is now shown.
+  remove the group. Only the groups that had a text tab before `vscode.diff`
+  are closed, so a tab opened meanwhile survives. Agent writes pass
+  `keepFocusIfInactive` (focus moves only when the diff lands in the active
+  group); burst dumps pass `preserveFocus`. `openDiff` returns whether a diff
+  tab is now shown. `isOpeningDiff` counts in-flight calls per path, since
+  calls for one file can overlap.
 - **Tab recognition** — `isPendingDiffInput()`: a `TabInputTextDiff` whose
   `original.scheme` is the snapshot scheme. There is no panel registry;
   `findDiffTabs` / `closeDiffTabs` scan `vscode.window.tabGroups`.
@@ -114,9 +118,12 @@ editor while keeping enough per-file state to accept or revert the whole file.
   `extension.ts` reopens it as its diff in that tab's group (`autoRouteTab` →
   `openDiff(path, { viewColumn })`, which closes the text tab after the diff
   opens). A file whose snapshot was just removed is not rerouted, which is
-  what lets `reopenAsTextEditor` work. Only the active tab of its group is
-  routed, and not while `isOpeningDiff`: opening the diff in front of the text
-  tab reports it as `changed`, and routing it again would steal focus.
+  what lets `reopenAsTextEditor` work. Live, only the active tab of its group
+  is routed, and not while `isOpeningDiff`: opening the diff in front of the
+  text tab reports it as `changed`, and routing it again would steal focus.
+  At activation every restored (clean) text tab of a pending file is routed,
+  with `preserveFocus`, one at a time, background tabs first, so each group's
+  visible tab ends up in front.
 - **Stats** — `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library,
   compared on LF-normalised text):
   - decides whether a file has any change at all (`openDiff` drops pure-EOL
@@ -151,12 +158,15 @@ Accept and revert are intentionally asymmetric:
   2. the diff has unsaved edits (Accept only — Revert overwrites them), since
      closing the last editor of a dirty document prompts save/discard;
   3. the file was open as a text tab when its diff opened (`hadTextTab`,
-     in memory only, so not after a reload).
+     recorded once the diff is confirmed, reset by `loadSnapshot`; in memory
+     only, so not after a reload).
 
   Otherwise the next diff opens **before** the old one closes, so the group
-  never empties (also for Revert of a created file). If `openDiff` shows
-  nothing (the next file has no change left), the plain file is reopened as
-  a fallback. This keeps a queue of reviews from piling up plain tabs.
+  never empties (also for Revert of a created file). `openFirstDiff` skips
+  pending files with no change left; if none shows a diff, the plain file is
+  reopened instead. If the next diff was already open in another group, the
+  plain file is reopened too (without focus) so the current group survives.
+  This keeps a queue of reviews from piling up plain tabs.
 
 `clearAll()` (git branch change) reopens only the active diff as a plain editor.
 

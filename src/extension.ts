@@ -165,9 +165,33 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     })
   );
 
+  // Restored text tabs of pending files, background ones included, become
+  // their diffs without taking focus. One at a time, background tabs first:
+  // a diff always opens as its group's front tab, so each group's visible tab
+  // goes last and stays in front.
+  const restored = new Map<string, vscode.Tab>();
   for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) { autoRouteTab(tab); }
+    for (const tab of group.tabs) {
+      if (!(tab.input instanceof vscode.TabInputText) || tab.isDirty) { continue; }
+      if (!diffManager.hasPendingDiff(tab.input.uri.fsPath)) { continue; }
+      const key = tab.input.uri.toString();
+      const seen = restored.get(key);
+      if (!seen || (tab.isActive && !seen.isActive)) { restored.set(key, tab); }
+    }
   }
+  const startupRoutes = [...restored.values()].sort((a, b) => Number(a.isActive) - Number(b.isActive));
+  void (async () => {
+    for (const tab of startupRoutes) {
+      try {
+        await diffManager.openDiff((tab.input as vscode.TabInputText).uri.fsPath, {
+          viewColumn: tab.group.viewColumn,
+          preserveFocus: true,
+        });
+      } catch (err) {
+        console.error('[claude-diff] startup auto-route failed:', err);
+      }
+    }
+  })();
   await diffManager.closeStaleDiffTabs();
 
   updatePendingContext();
