@@ -70,6 +70,9 @@ const EXCLUDED_SEGMENTS = new Set([
   'site-packages',
   'dist-info',
   'egg-info',
+  // Quarto / R (render caches, session temp files, RStudio per-user state)
+  '.quarto',
+  '.rproj.user',
 ]);
 
 /**
