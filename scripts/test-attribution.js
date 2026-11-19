@@ -109,6 +109,15 @@ console.log('Per-file mode');
   ok(a.timings.claimGraceMs === A.DEFAULT_TIMINGS.claimGraceMs, 'partial timings keep the other defaults');
 }
 {
+  const a = make({ perFile: () => true });
+  a.ingest(ev('UserPromptSubmit', 1000, { sid: 'main' }));
+  a.ingest(post('Edit', 1100, '/ws/main.R', { sid: 'main' }));
+  a.ingest(post('Edit', 1300, '/ws/sub.R', { sid: 'subagent-id' })); // id with no open turn
+  ok(a.classifyWrite('/ws/sub.R', 1200) === 'claude', 'PostToolUse from an id with no open turn still claims in the open turns');
+  a.ingest(ev('Stop', 2000, { sid: 'main' }));
+  ok(a.classifyWrite('/ws/other.R', 1200) === 'notClaude', '…and claims only the file it names');
+}
+{
   // Mapped drive vs UNC: the claimed path and the written path are compared canonically.
   const real = p => n(p).replace(n('/alias'), n('/real'));
   const a = make({ perFile: () => true, workspaceFolders: () => [n('/real/ws')], canonicalize: real });

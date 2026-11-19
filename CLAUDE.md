@@ -243,6 +243,8 @@ turn (Quarto preview, formatters) don't open diffs.
   - **Claimed** — the file was named by a `PostToolUse` of the turn
     (`file_path`, or `notebook_path` for NotebookEdit): Claude's. Claims also
     cover late change notices up to `claimGraceMs` (60 s) after the turn ends.
+    A `PostToolUse` whose session id has no open turn (a subagent reporting its
+    own id, or a failed turn-start hook) claims in every open turn instead.
   - **Bash** — once the turn ran Bash, every write of that turn is Claude's (a
     command doesn't say which files it writes). Known gap: other programs'
     writes in such a turn count too.

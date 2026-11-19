@@ -216,9 +216,11 @@ export class ClaudeAttribution {
 
     if (evt.event === 'PostToolUse') {
       if (evt.sessionId) { this.postToolSessions.add(evt.sessionId); }
-      // No open turn (its start hook failed): nothing to claim in; the missed
-      // turn start is recovered at its Stop instead.
-      for (const t of this.openTurns(evt.sessionId)) {
+      // No open turn for this session id: a subagent may report its own id, or
+      // the turn-start hook failed. Claim in every open turn rather than drop
+      // Claude's edit; a claim only ever covers the file it names.
+      const own = this.openTurns(evt.sessionId);
+      for (const t of own.length > 0 ? own : this.openTurns()) {
         if (evt.toolName === 'Bash') { t.ranBash = true; }
         if (evt.filePath) { t.claimed.add(this.canon(evt.filePath)); }
       }
