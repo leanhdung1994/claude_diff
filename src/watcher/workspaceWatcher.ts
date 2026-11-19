@@ -666,13 +666,24 @@ export class WorkspaceWatcher {
     const list = this.ignoredWrites.get(absPath);
     if (list) {
       list.push(write);
-      if (list.length > WorkspaceWatcher.IGNORED_WRITE_MAX_PER_FILE) { list.shift(); }
+      if (list.length > WorkspaceWatcher.IGNORED_WRITE_MAX_PER_FILE) {
+        // Never drop the earliest held write: its before-image is the only
+        // copy of the file's original, and the diff (and Revert) must start
+        // from it. Drop a decided write first, else the second-oldest held one.
+        const decided = list.findIndex(w => !w.undecided);
+        list.splice(decided >= 0 ? decided : 1, 1);
+      }
       return;
     }
     if (this.ignoredWrites.size >= WorkspaceWatcher.IGNORED_WRITE_MAX_FILES) {
-      // Map iterates in insertion order: drop the file remembered longest ago.
-      const oldest = this.ignoredWrites.keys().next().value;
-      if (oldest !== undefined) { this.ignoredWrites.delete(oldest); }
+      // Map iterates in insertion order: drop the file remembered longest ago,
+      // preferring one with nothing still held (a held write may be Claude's).
+      let victim: string | undefined;
+      for (const [key, entries] of this.ignoredWrites) {
+        if (!entries.some(w => w.undecided)) { victim = key; break; }
+      }
+      victim ??= this.ignoredWrites.keys().next().value;
+      if (victim !== undefined) { this.ignoredWrites.delete(victim); }
     }
     this.ignoredWrites.set(absPath, [write]);
   }
