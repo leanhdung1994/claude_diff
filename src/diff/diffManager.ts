@@ -118,6 +118,11 @@ export class DiffManager implements vscode.Disposable {
     );
   }
 
+  /** Whether a diff tab of this file is open in any group. */
+  hasDiffTab(filePath: string): boolean {
+    return this.findDiffTabs(normalizePath(filePath)).length > 0;
+  }
+
   /** True while openDiff() is opening this file's diff (auto-route skips it). */
   isOpeningDiff(filePath: string): boolean {
     return (this.opening.get(normalizePath(filePath)) ?? 0) > 0;
@@ -183,6 +188,8 @@ export class DiffManager implements vscode.Disposable {
       // Accept must keep it. There is simply no text hunk to render.
       if (!snapshot.fileExistedBefore) { return false; }
       this.forget(absPath);
+      // A diff tab of it may still be open elsewhere; its left side is gone.
+      await this.closeDiffTabs(absPath);
       this._onDidChangeDiffs.fire();
       return false;
     }
@@ -199,8 +206,9 @@ export class DiffManager implements vscode.Disposable {
     const viewColumn = existingDiff?.group.viewColumn
       ?? options?.viewColumn
       ?? textTab?.group.viewColumn;
-    const intoInactiveGroup = viewColumn !== undefined
-      && viewColumn !== vscode.window.tabGroups.activeTabGroup.viewColumn;
+    const activeColumn = vscode.window.tabGroups.activeTabGroup.viewColumn;
+    const intoInactiveGroup = viewColumn !== undefined && viewColumn !== activeColumn;
+    const targetColumn = viewColumn ?? activeColumn;
 
     const fileUri = vscode.Uri.file(canonicalCasePath(absPath));
     const showOptions: vscode.TextDocumentShowOptions = {
@@ -222,10 +230,12 @@ export class DiffManager implements vscode.Disposable {
       this._onDidChangeDiffs.fire();
       return false;
     }
-    // Recorded only now that the diff is confirmed: recording before the
-    // awaits could re-add an entry that Accept/Revert cleared meanwhile.
-    if (textTabs.length > 0) { this.hadTextTab.add(absPath); }
-    await this.closeTextTabsFor(absPath, textTabGroups);
+    const closed = await this.closeTextTabsFor(absPath, textTabGroups, targetColumn);
+    // Recorded only once the diff is confirmed (recording before the awaits
+    // could re-add an entry Accept/Revert cleared meanwhile), only for this
+    // same review (a new snapshot means a new review, see loadSnapshot), and
+    // only if a tab was really replaced (a kept dirty tab still shows it).
+    if (closed > 0 && this.snapshots.get(absPath) === snapshot) { this.hadTextTab.add(absPath); }
     this._onDidChangeDiffs.fire();
     return true;
   }
@@ -243,22 +253,63 @@ export class DiffManager implements vscode.Disposable {
   }
 
   /**
-   * Close this file's text tabs in the given groups once its diff is open, so
-   * the file isn't shown twice. (Looked up again by group: Tab objects taken
-   * before vscode.diff may be stale; a group holds at most one text tab per
-   * file.)
+   * Close this file's text tabs in the given groups once its diff is open in
+   * `targetColumn`, so the file isn't shown twice. (Looked up again by group:
+   * Tab objects taken before vscode.diff may be stale; a group holds at most
+   * one text tab per file.)
+   *
+   * Kept open: dirty tabs (closing would prompt save/discard while an
+   * external change is being routed) and, outside the diff's group, a tab
+   * that is its group's only tab (closing it would remove the group).
+   * @returns How many tabs were closed.
    */
-  private async closeTextTabsFor(absPath: string, groups: Set<vscode.ViewColumn>): Promise<void> {
-    // Preserve unsaved user edits. Closing a dirty text tab here would trigger
-    // VS Code's save/discard dialog while an external change is being routed
-    // to the diff editor.
-    const targets = this.findTextTabs(absPath)
-      .filter((tab) => !tab.isDirty && groups.has(tab.group.viewColumn));
-    if (targets.length === 0) { return; }
+  private async closeTextTabsFor(
+    absPath: string,
+    groups: Set<vscode.ViewColumn>,
+    targetColumn: vscode.ViewColumn
+  ): Promise<number> {
+    const targets = this.findTextTabs(absPath).filter((tab) => (
+      !tab.isDirty &&
+      groups.has(tab.group.viewColumn) &&
+      (tab.group.viewColumn === targetColumn || tab.group.tabs.length > 1)
+    ));
+    if (targets.length === 0) { return 0; }
     try {
       await vscode.window.tabGroups.close(targets);
     } catch (err) {
       console.error('[claude-diff] closeTextTabsFor failed:', err);
+    }
+    return targets.length;
+  }
+
+  /**
+   * Turn restored text tabs of pending files into their diffs at activation,
+   * background tabs included, without taking focus. One file at a time, and
+   * its tabs are looked up again right before: an earlier open can close a
+   * group and renumber the ones after it. Files not shown in front of any
+   * group go first, since a diff always opens as its group's front tab.
+   */
+  async routeRestoredTextTabs(): Promise<void> {
+    const paths = new Set<string>();
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (tab.input instanceof vscode.TabInputText && !tab.isDirty) {
+          const absPath = normalizePath(tab.input.uri.fsPath);
+          if (this.snapshots.has(absPath)) { paths.add(absPath); }
+        }
+      }
+    }
+    const shownInFront = (absPath: string): boolean => this.findTextTabs(absPath).some((tab) => tab.isActive);
+    const ordered = [...paths].sort((a, b) => Number(shownInFront(a)) - Number(shownInFront(b)));
+    for (const absPath of ordered) {
+      const tabs = this.findTextTabs(absPath).filter((tab) => !tab.isDirty);
+      if (tabs.length === 0 || !this.snapshots.has(absPath)) { continue; }
+      const tab = tabs.find((t) => t.isActive) ?? tabs[0];
+      try {
+        await this.openDiff(absPath, { viewColumn: tab.group.viewColumn, preserveFocus: true });
+      } catch (err) {
+        console.error('[claude-diff] restoring a pending tab as its diff failed:', err);
+      }
     }
   }
 
@@ -595,12 +646,33 @@ export class DiffManager implements vscode.Disposable {
   private async closeTabs(tabs: vscode.Tab[]): Promise<void> {
     if (tabs.length === 0) { return; }
 
-    // A diff whose right side has unsaved edits: closing the last editor of
-    // that document would prompt save/discard. Open the file as a plain tab in
-    // the same group first (focus stays put), so the edits stay visible and
-    // nothing prompts. Callers remove the snapshot before closing, so
-    // autoRouteTab doesn't send the new tab back into a diff.
-    const dirty = tabs.filter((tab) => tab.isDirty && isPendingDiffInput(tab.input));
+    const keyOf = (tab: vscode.Tab): string => (
+      `${tab.group.viewColumn}|${normalizePath((tab.input as vscode.TabInputTextDiff).modified.fsPath)}`
+    );
+    const closingKeys = new Set(tabs.filter((tab) => isPendingDiffInput(tab.input)).map(keyOf));
+
+    // Open the file as a plain tab in the same group first (focus stays put)
+    // for:
+    // - a diff whose right side has unsaved edits: closing the last editor of
+    //   that document would prompt save/discard; this way the edits stay
+    //   visible and nothing prompts;
+    // - one diff (the group's front one) of a group that would otherwise be
+    //   left empty: VS Code would remove the group. Skipped when the file no
+    //   longer exists (Revert of a created file).
+    // Callers remove the snapshot before closing, so autoRouteTab doesn't send
+    // the new tab back into a diff.
+    const keep = new Set(tabs.filter((tab) => tab.isDirty && isPendingDiffInput(tab.input)));
+    for (const group of vscode.window.tabGroups.all) {
+      if (!tabs.some((tab) => tab.group.viewColumn === group.viewColumn)) { continue; }
+      const emptied = group.tabs.every((tab) => isPendingDiffInput(tab.input) && closingKeys.has(keyOf(tab)));
+      if (!emptied) { continue; }
+      const front = group.tabs.find((tab) => tab.isActive) ?? group.tabs[0];
+      const ownTab = tabs.find((tab) => isPendingDiffInput(tab.input) && keyOf(tab) === keyOf(front));
+      if (ownTab && fs.existsSync((ownTab.input as vscode.TabInputTextDiff).modified.fsPath)) {
+        keep.add(ownTab);
+      }
+    }
+    const dirty = [...keep];
     for (const tab of dirty) {
       try {
         await vscode.window.showTextDocument((tab.input as vscode.TabInputTextDiff).modified, {
@@ -609,7 +681,7 @@ export class DiffManager implements vscode.Disposable {
           preview: false,
         });
       } catch (err) {
-        console.error('[claude-diff] keeping unsaved edits open failed:', err);
+        console.error('[claude-diff] keeping a plain tab open failed:', err);
       }
     }
 
@@ -617,11 +689,7 @@ export class DiffManager implements vscode.Disposable {
     // than closing possibly stale Tab objects.
     let targets = tabs;
     if (dirty.length > 0) {
-      const keyOf = (tab: vscode.Tab): string => (
-        `${tab.group.viewColumn}|${normalizePath((tab.input as vscode.TabInputTextDiff).modified.fsPath)}`
-      );
-      const wanted = new Set(tabs.map(keyOf));
-      targets = this.allDiffTabs().filter((tab) => wanted.has(keyOf(tab)));
+      targets = this.allDiffTabs().filter((tab) => closingKeys.has(keyOf(tab)));
     }
 
     try {

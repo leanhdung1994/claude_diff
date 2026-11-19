@@ -136,22 +136,29 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
     vscode.window.onDidChangeActiveTextEditor(() => updatePendingContext()),
   );
 
-  const autoRouteTab = (tab: vscode.Tab): void => {
+  const autoRouteTab = (tab: vscode.Tab, event: 'opened' | 'changed'): void => {
     if (!(tab.input instanceof vscode.TabInputText)) { return; }
     // A tab becomes `changed` when the user edits it. Never close a dirty
     // document from the auto-router: doing so makes VS Code show its
     // save/discard confirmation and can discard edits before auto-save runs.
     if (tab.isDirty) { return; }
-    // Only the tab its group shows. openDiff() opens the diff in front of the
-    // text tab before closing it, which reports that tab as `changed`
-    // (no longer active); routing it again would steal focus.
-    if (!tab.isActive) { return; }
     const fsPath = tab.input.uri.fsPath;
-    if (!diffManager.hasPendingDiff(fsPath) || diffManager.isOpeningDiff(fsPath)) { return; }
+    if (!diffManager.hasPendingDiff(fsPath)) { return; }
+    // A newly opened tab is always routed (even one opened in the background,
+    // or while the diff is still opening). A `changed` tab only when it is its
+    // group's front tab and the file has no diff anywhere yet:
+    // - openDiff() opens the diff in front of the text tab before closing
+    //   it, which reports that tab as `changed`;
+    // - openDiff() deliberately keeps a text tab that is the only tab of
+    //   another group.
+    // Routing those would pull focus to the diff on every save.
+    if (event === 'changed' && (
+      !tab.isActive || diffManager.isOpeningDiff(fsPath) || diffManager.hasDiffTab(fsPath)
+    )) { return; }
     void (async () => {
       try {
         // openDiff() opens the diff in this tab's group, then closes the tab.
-        await diffManager.openDiff(fsPath, { viewColumn: tab.group.viewColumn });
+        await diffManager.openDiff(fsPath, { viewColumn: tab.group.viewColumn, preserveFocus: !tab.isActive });
       } catch (err) {
         console.error('[claude-diff] auto-route failed:', err);
       }
@@ -160,38 +167,16 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
 
   context.subscriptions.push(
     vscode.window.tabGroups.onDidChangeTabs((e) => {
-      for (const tab of e.opened) { autoRouteTab(tab); }
-      for (const tab of e.changed) { autoRouteTab(tab); }
+      for (const tab of e.opened) { autoRouteTab(tab, 'opened'); }
+      for (const tab of e.changed) { autoRouteTab(tab, 'changed'); }
     })
   );
 
   // Restored text tabs of pending files, background ones included, become
-  // their diffs without taking focus. One at a time, background tabs first:
-  // a diff always opens as its group's front tab, so each group's visible tab
-  // goes last and stays in front.
-  const restored = new Map<string, vscode.Tab>();
-  for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) {
-      if (!(tab.input instanceof vscode.TabInputText) || tab.isDirty) { continue; }
-      if (!diffManager.hasPendingDiff(tab.input.uri.fsPath)) { continue; }
-      const key = tab.input.uri.toString();
-      const seen = restored.get(key);
-      if (!seen || (tab.isActive && !seen.isActive)) { restored.set(key, tab); }
-    }
-  }
-  const startupRoutes = [...restored.values()].sort((a, b) => Number(a.isActive) - Number(b.isActive));
-  void (async () => {
-    for (const tab of startupRoutes) {
-      try {
-        await diffManager.openDiff((tab.input as vscode.TabInputText).uri.fsPath, {
-          viewColumn: tab.group.viewColumn,
-          preserveFocus: true,
-        });
-      } catch (err) {
-        console.error('[claude-diff] startup auto-route failed:', err);
-      }
-    }
-  })();
+  // their diffs without taking focus.
+  void diffManager.routeRestoredTextTabs().catch((err: unknown) => {
+    console.error('[claude-diff] startup auto-route failed:', err);
+  });
   await diffManager.closeStaleDiffTabs();
 
   updatePendingContext();

@@ -89,7 +89,10 @@ editor while keeping enough per-file state to accept or revert the whole file.
   The diff opens **before** the file's text tabs close (`closeTextTabsFor`,
   dirty tabs are kept): closing a group's only tab first would make VS Code
   remove the group. Only the groups that had a text tab before `vscode.diff`
-  are closed, so a tab opened meanwhile survives. Agent writes pass
+  are closed, so a tab opened meanwhile survives, and a text tab that is the
+  only tab of a group other than the diff's is kept (a pending file then
+  stays plain there). `hadTextTab` is recorded only if a tab was really
+  closed. Agent writes pass
   `keepFocusIfInactive` (focus moves only when the diff lands in the active
   group); burst dumps pass `preserveFocus`. `openDiff` returns whether a diff
   tab is now shown. `isOpeningDiff` counts in-flight calls per path, since
@@ -118,12 +121,20 @@ editor while keeping enough per-file state to accept or revert the whole file.
   `extension.ts` reopens it as its diff in that tab's group (`autoRouteTab` →
   `openDiff(path, { viewColumn })`, which closes the text tab after the diff
   opens). A file whose snapshot was just removed is not rerouted, which is
-  what lets `reopenAsTextEditor` work. Live, only the active tab of its group
-  is routed, and not while `isOpeningDiff`: opening the diff in front of the
-  text tab reports it as `changed`, and routing it again would steal focus.
-  At activation every restored (clean) text tab of a pending file is routed,
-  with `preserveFocus`, one at a time, background tabs first, so each group's
-  visible tab ends up in front.
+  what lets `reopenAsTextEditor` work. A newly **opened** tab is always
+  routed (`preserveFocus` if it opened in the background). A **changed** tab
+  only if it is its group's front tab, no `openDiff` for it is in flight
+  (`isOpeningDiff`) and the file has no diff tab yet (`hasDiffTab`): opening
+  the diff in front of a text tab reports it as `changed`, and a kept
+  only-tab-of-its-group text tab would otherwise pull focus on every save.
+  At activation `routeRestoredTextTabs` routes every restored clean text tab
+  of a pending file with `preserveFocus`, one file at a time (tabs looked up
+  again each time, since closing a group renumbers the rest), files not in
+  front of any group first, so each group's visible tab ends up in front.
+- **Closing diff tabs never empties a group** — `closeTabs` first opens the
+  plain file (no focus) in a group whose tabs would all be closed, and for a
+  diff with unsaved edits. Skipped if the file no longer exists, so Revert of
+  a created file can still remove its group.
 - **Stats** — `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library,
   compared on LF-normalised text):
   - decides whether a file has any change at all (`openDiff` drops pure-EOL
