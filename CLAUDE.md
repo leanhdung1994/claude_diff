@@ -24,7 +24,8 @@ npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
   and reload the host after each recompile.
 - There is no lint, formatter, or general test runner configured.
   `npm run compile` is the minimum correctness gate; `npm run test:attribution`
-  runs the only automated tests (Claude turn-window attribution). Manually
+  runs the only automated tests (Claude hook attribution: turn window and
+  per-file rule, hook installer, event source). Manually
   validate diff opening, accept/revert, and navigation in the Extension
   Development Host.
 - `out/` is untracked and `tsc` never deletes files, so output from deleted
@@ -142,8 +143,9 @@ Accept and revert are intentionally asymmetric:
 
 Claude's edits are detected through the workspace watcher. By default
 (`editAttribution = allExternalWrites`) every external write is treated as an
-agent edit, whoever made it. The opt-in Claude turn-window mode below only
-*filters* the watcher's writes; it is not a separate detection pipeline.
+agent edit, whoever made it. The opt-in Claude hook modes below
+(`claudeCodeHooks`, `claudeCodeHooksPerFile`) only *filter* the watcher's
+writes; they are not a separate detection pipeline.
 
 **Workspace watcher (the only path for agent edits)**
 
@@ -195,7 +197,8 @@ agent edit, whoever made it. The opt-in Claude turn-window mode below only
 copy in, git, formatters etc. don't open diffs.
 
 - **Hooks** — `claudeHookInstaller.ts` adds one `UserPromptSubmit` and one
-  `Stop` hook to `~/.claude/settings.json`.
+  `Stop` hook to `~/.claude/settings.json` (plus `PostToolUse` in per-file
+  mode; `computeHookSettings` takes the mode `off` / `turn` / `perFile`).
   - Timeout 30 s. The hook copies its stdin JSON into
     `~/.claude-diff/claude-events/`.
   - It must print nothing, because `UserPromptSubmit` stdout reaches Claude's
@@ -228,6 +231,43 @@ copy in, git, formatters etc. don't open diffs.
   - Nothing but Claude writes workspace files during a Claude turn.
   - Turns are not interrupted with Esc (no `Stop` fires; the turn stays open
     until the next message or 3 h).
+
+### Per-file attribution (opt-in, `editAttribution = claudeCodeHooksPerFile`)
+
+Same hooks and turn window as above, plus one `PostToolUse` hook (matcher
+`Edit|Write|MultiEdit|NotebookEdit|Bash`), so writes by other programs during a
+turn (Quarto preview, formatters) don't open diffs.
+
+- **Rule** (`ClaudeAttribution.classifyWrite`, verdict `claude` / `notClaude` /
+  `later`). Outside every turn window: not Claude's. Inside one:
+  - **Claimed** — the file was named by a `PostToolUse` of the turn
+    (`file_path`, or `notebook_path` for NotebookEdit): Claude's. Claims also
+    cover late change notices up to `claimGraceMs` (60 s) after the turn ends.
+  - **Bash** — once the turn ran Bash, every write of that turn is Claude's (a
+    command doesn't say which files it writes). Known gap: other programs'
+    writes in such a turn count too.
+  - Otherwise, while the turn is open: **`later`**.
+  - Once the turn has ended unclaimed: not Claude's — unless its session has
+    never sent a `PostToolUse` (started before the hook was installed, or
+    hasn't edited anything yet), which falls back to the turn window rather
+    than silently dropping its edits.
+- **Holding** — a `later` write is stored in `ignoredWrites` like an ignored
+  one (earliest before-image per file), logged as held.
+  - `onDecisionsChanged` (on `PostToolUse`, `Stop`, a prompt closing an
+    interrupted turn, a turn expiring at `maxOpenMs`) triggers
+    `recoverIgnoredWrites` with "now Claude's" as the match. Debounced per batch
+    of events.
+  - When a new write is judged Claude's while an earlier write of the same file
+    is still held, `takeEarliestAgentWrite` uses the earlier before-image, so
+    the diff doesn't hide Claude's first edit.
+  - Switching modes re-decides held writes under the rule now in force.
+- **Latency** — `ClaudeHookSource.start()` `fs.watch`es the events folder
+  (50 ms debounce, 2 s poll as backup), so a claim opens the held diff ~0.3 s
+  after Claude's write.
+- **Cost** — one hook run (~0.23 s on Windows) per Edit/Write/Bash call.
+  `PostToolUse` payloads include `tool_response` (file contents, command
+  output), so event files can be MB-sized; they are read once and deleted
+  after 30 min.
 - **Opt-in prompt** — `offerClaudeCodeHooks` (called at the end of activation)
   asks once per user whether to switch to this mode, because it edits the global
   `~/.claude/settings.json`.
@@ -346,7 +386,7 @@ custom-only.
 
   | Setting                                  | Purpose                                                                                                                                                                                                                                                                                                                                                                                              |
   | ---                                      | ---                                                                                                                                                                                                                                                                                                                                                                                                  |
-  | `claude-diff.editAttribution`            | `allExternalWrites` (default: every external write is an agent edit) or `claudeCodeHooks` (Claude turn-window attribution; installs hooks in `~/.claude/settings.json`)                                                                                                                                                                                                                              |
+  | `claude-diff.editAttribution`            | `allExternalWrites` (default: every external write is an agent edit) or `claudeCodeHooks` (Claude turn-window attribution; installs hooks in `~/.claude/settings.json`) or `claudeCodeHooksPerFile` (per-file attribution; adds a `PostToolUse` hook)                                                                                                                                                                                                                              |
   | `claude-diff.supportedFileDetectionMode` | `defaultAndCustom` (default) or `customOnly`                                                                                                                                                                                                                                                                                                                                                         |
   | `claude-diff.supportedFileExtensions`    | Extra extensions to treat as text (dot optional)                                                                                                                                                                                                                                                                                                                                                     |
   | `claude-diff.supportedFilenames`         | Extra exact filenames to treat as text                                                                                                                                                                                                                                                                                                                                                               |

@@ -39,7 +39,11 @@ All under `claude-diff.*` (gear button in the Pending Files view). Key ones:
 - `editAttribution`: `allExternalWrites` (default) opens a diff for any file
   written outside the editor. `claudeCodeHooks` only counts writes made during a
   Claude Code turn; it adds two hooks to `~/.claude/settings.json` (restart
-  running Claude sessions afterwards).
+  running Claude sessions afterwards). `claudeCodeHooksPerFile` only counts the
+  files Claude edits with its file tools, so other programs writing during a
+  turn (a Quarto preview, a formatter) are ignored. In a turn where Claude runs a
+  shell command, every write of that turn still counts. It adds a third hook,
+  which costs about 0.2 s per edit.
 - `supportedFileExtensions` / `supportedFilenames` /
   `supportedFilenamePatterns`: extra files to review.
 - `maxFileLines`: skip files longer than this (default 5000).
