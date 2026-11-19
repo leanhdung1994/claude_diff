@@ -17,6 +17,7 @@ Code itself; it runs wherever the user likes (Claude Code extension, a terminal,
 npm install
 npm run compile      # tsc -p ./  → out/  (main build / correctness check)
 npm run watch        # tsc -watch -p ./  (normal dev loop)
+npm version minor
 npx @vscode/vsce package   # runs vscode:prepublish = clean out/ + compile
 ```
 
