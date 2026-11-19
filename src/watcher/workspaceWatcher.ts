@@ -595,6 +595,11 @@ export class WorkspaceWatcher {
     return hit;
   }
 
+  /** Forget a file's remembered writes, if `hit` is still among them. */
+  private dropIgnoredWrite(absPath: string, hit: IgnoredWrite): void {
+    if (this.ignoredWrites.get(absPath)?.includes(hit)) { this.ignoredWrites.delete(absPath); }
+  }
+
   private rememberIgnoredWrite(absPath: string, write: IgnoredWrite): void {
     const list = this.ignoredWrites.get(absPath);
     if (list) {
@@ -620,15 +625,24 @@ export class WorkspaceWatcher {
     for (const [absPath, list] of Array.from(this.ignoredWrites)) {
       const hit = list.find(w => match(absPath, w.eventAt));
       if (!hit) { continue; }
-      this.ignoredWrites.delete(absPath);
-      if (this.diffManager.hasPendingDiff(absPath)) { continue; }
+      if (this.diffManager.hasPendingDiff(absPath)) {
+        this.ignoredWrites.delete(absPath);
+        continue;
+      }
 
+      // Keep the entry while reading: a new write of this file arriving
+      // meanwhile must still find it (takeEarliestAgentWrite), or its diff
+      // would start from the in-between version.
       let current: string;
       try {
         current = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))).toString('utf8');
       } catch {
+        this.dropIgnoredWrite(absPath, hit);
         continue; // deleted since — nothing to show
       }
+      // Taken meanwhile (by that new write, or a concurrent recovery run).
+      if (!this.ignoredWrites.get(absPath)?.includes(hit)) { continue; }
+      this.ignoredWrites.delete(absPath);
       if (exceedsLineLimit(current)) { continue; }
       if (hit.existed && this.normalizeContent(current) === this.normalizeContent(hit.before)) { continue; }
       // The write may have arrived while this was reading the file.
