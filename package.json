@@ -4,7 +4,7 @@
   "description": "Review every file edit by Claude Code in VS Code's diff editor, then accept or revert it.",
   "version": "0.0.1",
   "publisher": "leanhdung1994",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "icon": "icon.png",
   "repository": {
     "type": "git",

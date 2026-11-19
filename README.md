@@ -1,97 +1,77 @@
 # Diff Review for Claude Code
 
-Review every file edit Claude Code makes in VS Code's own diff editor, before
-you keep it.
+Review every file edit Claude Code makes in VS Code's built-in diff editor, then
+accept or revert it.
 
-Works out of the box, with no setup. Edits are picked up from the file system,
-so it doesn't matter whether Claude Code runs in the Claude Code extension,
-VS Code's terminal or an external one.
+No setup needed. Edits are detected from the file system, so Claude Code can run
+anywhere: the Claude Code extension, VS Code's terminal or an external one.
 
-## Features
+## How it works
 
-- **Automatic diffs.** When Claude writes a file, its diff opens in VS Code's
-  built-in diff editor: the version before Claude's edit on the left, the live
-  file on the right.
-- **Only the changed lines.** Unchanged regions are collapsed by default
-  (`diffEditor.hideUnchangedRegions.enabled`); click a "hidden lines" bar to
-  expand it.
-- **A real editor on the right.** Edit, save, undo, IntelliSense and your
-  keybindings all work while reviewing. `F7` / `Shift+F7` jump between changes.
-- **Accept or revert per file.** Use the buttons in the diff tab's title bar, or
-  `Ctrl+Shift+Y` / `Ctrl+Shift+Z`. Accept keeps Claude's version; Revert
-  restores the file (or deletes it, if Claude created it).
-- **Pending Files view.** The Claude Diff icon in the Activity Bar lists every
-  file waiting for review in its folder structure, with `+added −removed`
-  counts. Drag it into the Secondary Side Bar to keep it next to the Claude Code
-  chat.
-- **Survives reloads.** Pending diffs are kept in workspace state and restored
-  when VS Code restarts.
-- **Git-aware.** Switching branches, pulling or rebasing doesn't flood you with
-  diffs.
+1. When Claude writes a file, a diff tab `<file> (AI changes)` opens: the
+   original on the left, the live, editable file on the right.
+2. **Accept** keeps Claude's version; **Revert** restores the original (or
+   deletes the file if Claude created it). The next pending file opens
+   automatically.
+3. The **Pending Files** view (Claude Diff icon in the Activity Bar) lists every
+   file awaiting review with `+/−` counts, plus **Accept All Files**.
 
-## Usage
+Unchanged lines are collapsed, pending diffs survive VS Code restarts, and git
+branch switches, pulls and rebases don't flood you with diffs.
 
-1. Run Claude Code and let it edit files in your workspace.
-2. Each edited file opens as a diff tab titled `<file> (AI changes)`.
-3. Review it, then **Accept** or **Revert** from the title bar. The next pending
-   file opens automatically.
-4. Use **Accept All Files** in the Pending Files view to accept everything at once.
+## Commands and keybindings
 
-## Commands
+  | Command                           | Keybinding                      |
+  | --------------------------------- | ------------------------------- |
+  | Claude Diff: Accept File          | `Ctrl+Shift+Y` (`Cmd` on macOS) |
+  | Claude Diff: Revert File          | `Ctrl+Shift+Z` (`Cmd` on macOS) |
+  | Claude Diff: Previous Edited File | `Alt+H`                         |
+  | Claude Diff: Next Edited File     | `Alt+L`                         |
+  | Claude Diff: Accept All Files     | —                               |
+  | Claude Diff: Open Settings        | —                               |
 
-- `Claude Diff: Accept File` — accept the file in the active diff
-- `Claude Diff: Revert File` — revert the file in the active diff
-- `Claude Diff: Accept All Files` — accept every pending file
-- `Claude Diff: Previous Edited File`
-- `Claude Diff: Next Edited File`
-- `Claude Diff: Open Settings`
-
-## Keybindings
-
-- `Ctrl+Shift+Y` / `Cmd+Shift+Y` on macOS: accept the file in the active diff.
-- `Ctrl+Shift+Z` / `Cmd+Shift+Z` on macOS: revert the file in the active diff.
-- `Alt+H`: previous edited file, while pending diffs exist.
-- `Alt+L`: next edited file, while pending diffs exist.
+Accept, revert and file navigation are also buttons in the diff tab's title bar.
 
 ## Settings
 
-All settings are under `claude-diff.*` (gear button in the Pending Files view).
-The most useful:
+All under `claude-diff.*` (gear button in the Pending Files view). Key ones:
 
-- `editAttribution` — `allExternalWrites` (default) opens a diff for every
-  file written outside VS Code's editor, whoever wrote it; `claudeCodeHooks`
-  only counts writes made during a Claude Code turn, so files you copy in, git
-  or a formatter don't open diffs. It adds two hooks to `~/.claude/settings.json`,
-  so the extension asks once before turning it on; restart any running Claude
-  session afterwards so it loads the hooks.
-- `supportedFileExtensions`, `supportedFilenames`, `supportedFilenamePatterns` —
-  extra files to review.
-- `maxFileLines` — skip very large files (default 5000).
-- `soundNotificationsEnabled` — play a sound when Claude finishes or needs input
+- `editAttribution`: `allExternalWrites` (default) opens a diff for any file
+  written outside the editor. `claudeCodeHooks` only counts writes made during a
+  Claude Code turn; it adds two hooks to `~/.claude/settings.json` (restart
+  running Claude sessions afterwards).
+- `supportedFileExtensions` / `supportedFilenames` /
+  `supportedFilenamePatterns`: extra files to review.
+- `maxFileLines`: skip files longer than this (default 5000).
+- `soundNotificationsEnabled`: sound when Claude finishes or needs input
   (Windows).
 
-Uninstalling the extension removes its hooks from `~/.claude/settings.json` and
-its `~/.claude-diff` folder the next time VS Code restarts.
+To show whole files, turn off `diffEditor.hideUnchangedRegions.enabled`; for
+inline diffs, turn off `diffEditor.renderSideBySide`.
 
-To see whole files instead of only the changed lines, turn off
-`diffEditor.hideUnchangedRegions.enabled`. To see the diff inline rather than
-side by side, turn off `diffEditor.renderSideBySide`.
+Uninstalling removes the extension's hooks and `~/.claude-diff` folder on the
+next VS Code restart.
 
 ## Development
 
 ```bash
 npm install
-npm run compile
+npm run compile            # or: npm run watch
+npx @vscode/vsce package   # build a .vsix
 ```
 
-Press `F5` in VS Code to launch the Extension Development Host.
+Press `F5` to launch the Extension Development Host.
 
-Package the extension:
+## Acknowledgements
 
-```bash
-npx @vscode/vsce package
-```
+This extension is a modified fork of
+[claude_diff_view_vscode_extension](https://github.com/konan-1947/claude_diff_view_vscode_extension)
+by konan-1947, licensed under AGPL-3.0. It was forked and modified in November
+2026; see the git history for the changes.
 
 ## License
 
-MIT
+Copyright (C) konan-1947 (original work)\
+Copyright (C) 2026 leanhdung1994 (modifications)
+
+Licensed under the [GNU Affero General Public License v3.0](LICENSE).
