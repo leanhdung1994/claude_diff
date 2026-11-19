@@ -586,7 +586,15 @@ export class WorkspaceWatcher {
     try {
       verdict = await this.attribution.classifyWrite(absPath, eventAt);
     } catch {
-      return true; // fail open: a broken gate must not hide agent edits
+      verdict = 'agent'; // fail open: a broken gate must not hide agent edits
+    }
+    // The file may have become pending while the gate was deciding (a held
+    // write of it was just opened). Then this write is only new content for
+    // that diff: neither open it again nor remember it, or accepting the diff
+    // could later reopen it as a stray diff.
+    if (this.diffManager.hasPendingDiff(absPath)) {
+      this.diffManager.notifyPendingContentChanged(absPath);
+      return false;
     }
     if (verdict === 'agent') { return true; }
     // Ignored or undecided: either way keep the before-image, so the write
@@ -608,7 +616,12 @@ export class WorkspaceWatcher {
   private takeEarliestAgentWrite(absPath: string): IgnoredWrite | undefined {
     const list = this.ignoredWrites.get(absPath);
     if (!list || !this.attribution) { return undefined; }
-    const hit = list.find(w => w.undecided && this.attribution!.classifyWriteNow(absPath, w.eventAt) === 'agent');
+    let hit: IgnoredWrite | undefined;
+    try {
+      hit = list.find(w => w.undecided && this.attribution!.classifyWriteNow(absPath, w.eventAt) === 'agent');
+    } catch {
+      return undefined; // the caller still opens the diff from the current before-image
+    }
     if (hit) { this.ignoredWrites.delete(absPath); }
     return hit;
   }
@@ -627,7 +640,12 @@ export class WorkspaceWatcher {
       let hit: IgnoredWrite | undefined;
       for (const w of list) {
         if (!w.undecided) { continue; }
-        const verdict = classify(absPath, w.eventAt);
+        let verdict: AgentWriteVerdict;
+        try {
+          verdict = classify(absPath, w.eventAt);
+        } catch {
+          continue; // stays held; decided at the next run
+        }
         if (verdict === 'notAgent') {
           w.undecided = false;
         } else if (verdict === 'agent' && !hit) {
