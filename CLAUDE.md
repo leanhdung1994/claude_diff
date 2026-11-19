@@ -68,38 +68,43 @@ editor while keeping enough per-file state to accept or revert the whole file.
   (`diffEditor.renderSideBySide`) and every other diff option are global user
   settings — there is no per-editor API.
 - There is **no per-hunk accept/reject** (by design). Accept/revert work on
-  whole files. The diff editor's own "revert block" arrows still work: they edit
-  the right side, and once the user saves content equal to the snapshot,
-  `DiffManager.onDocumentSettled` drops the pending entry like an accept.
-  Because the agent can trigger this too (writing a file back to its original
-  while you work elsewhere), it never moves focus: a diff that is the visible
-  tab of its group is replaced in place by the plain file with `preserveFocus`,
-  and a background diff tab is just closed.
-- Diff tabs are recognised with `isPendingDiffInput()` — a `TabInputTextDiff`
-  whose `original.scheme` is the snapshot scheme. There is no panel registry;
+  whole files.
+  - The diff editor's own "revert block" arrows still work: they edit the right
+    side, and once the user saves content equal to the snapshot,
+    `DiffManager.onDocumentSettled` drops the pending entry like an accept.
+  - The agent can trigger this too (writing a file back to its original while
+    you work elsewhere), so it never moves focus: a diff that is the visible tab
+    of its group is replaced in place by the plain file with `preserveFocus`,
+    and a background diff tab is just closed.
+- **Tab recognition** — `isPendingDiffInput()`: a `TabInputTextDiff` whose
+  `original.scheme` is the snapshot scheme. There is no panel registry;
   `findDiffTabs` / `closeDiffTabs` scan `vscode.window.tabGroups`.
-- Diff tabs survive a window reload. The `onFileSystem:claude-diff-original`
-  activation event lets VS Code activate the extension to resolve a restored
-  left side; the provider is registered synchronously at the top of
-  `activateExtension`, and `closeStaleDiffTabs()` closes restored tabs whose
-  snapshot is gone. `DiffManager.dispose()` therefore never closes tabs.
-- Accept/revert/clearAll/acceptAllPending **open the plain text editor first,
-  then close the diff tab** (`reopenAsTextEditor` → `closeDiffTabs`). Closing
-  the last editor of a document with unsaved edits would otherwise prompt
-  save/discard. `captureViewState()` records the diff tab's editor group (so
-  with split editors the plain editor replaces the diff in its own group, even
-  when its title-bar button was clicked in an inactive group) and the
-  cursor/scroll of the visible `file:` editor for that path in that group, i.e.
-  the diff's right side.
-- `extension.ts` auto-routes tabs: if a pending file is opened as a plain text
-  editor, that tab is closed and reopened as its diff (`autoRouteTab`). A file
-  whose snapshot was just removed is not rerouted, which is what lets
+- **Diff tabs survive a window reload.**
+  - The `onFileSystem:claude-diff-original` activation event lets VS Code
+    activate the extension to resolve a restored left side.
+  - The provider is registered synchronously at the top of `activateExtension`.
+  - `closeStaleDiffTabs()` closes restored tabs whose snapshot is gone.
+  - `DiffManager.dispose()` therefore never closes tabs.
+- **Closing a diff** — accept/revert/clearAll/acceptAllPending **open the plain
+  text editor first, then close the diff tab** (`reopenAsTextEditor` →
+  `closeDiffTabs`).
+  - Why: closing the last editor of a document with unsaved edits would
+    otherwise prompt save/discard.
+  - `captureViewState()` records the diff tab's editor group, so with split
+    editors the plain editor replaces the diff in its own group (even when its
+    title-bar button was clicked in an inactive group).
+  - It also records the cursor/scroll of the visible `file:` editor for that
+    path in that group, i.e. the diff's right side.
+- **Auto-routing** — if a pending file is opened as a plain text editor,
+  `extension.ts` closes that tab and reopens it as its diff (`autoRouteTab`). A
+  file whose snapshot was just removed is not rerouted, which is what lets
   `reopenAsTextEditor` work.
-- `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library, compared on
-  LF-normalised text) decides whether a file has any change at all (`openDiff`
-  drops pure-EOL changes) and gives the `+/−/hunks` counts in Pending Files. A
-  hunk is a contiguous block of changed lines, matching the change blocks the
-  diff editor shows.
+- **Stats** — `diffStats.ts` (`computeDiffStats`: Myers via the `diff` library,
+  compared on LF-normalised text):
+  - decides whether a file has any change at all (`openDiff` drops pure-EOL
+    changes);
+  - gives the `+/−/hunks` counts in Pending Files. A hunk is a contiguous block
+    of changed lines, matching the change blocks the diff editor shows.
 
 ### Diff state model
 
@@ -115,18 +120,23 @@ editor while keeping enough per-file state to accept or revert the whole file.
   non-dirty content, skipped for paths in `resolving` so `revert()`'s own save
   doesn't trigger it)
 
-Accept and revert are intentionally asymmetric: accepting just deletes the
-snapshot (the file on disk already holds the agent's version); reverting writes
-the snapshot back to disk (or deletes a file the agent created). After either,
-the next pending file's diff opens.
+Accept and revert are intentionally asymmetric:
+
+- **Accept** just deletes the snapshot (the file on disk already holds the
+  agent's version).
+- **Revert** writes the snapshot back to disk (or deletes a file the agent
+  created).
+- After either, the next pending file's diff opens.
 
 `clearAll()` (git branch change) reopens only the active diff as a plain editor.
-Because a checkout's writes open diffs asynchronously and race for the active
-tab, `WorkspaceWatcher.resolveOrHold` calls `markActiveTabBeforeAutoOpen()` on
-the first write of each cluster (writes more than 500 ms apart start a new one),
-recording the tab that was really active beforehand; `clearAll()` uses that hint
-instead of the current active tab if it is less than 15 s old. The hint is used
-once, then reset.
+
+- Problem: a checkout's writes open diffs asynchronously and race for the active
+  tab.
+- `WorkspaceWatcher.resolveOrHold` calls `markActiveTabBeforeAutoOpen()` on the
+  first write of each cluster (writes more than 500 ms apart start a new one),
+  recording the tab that was really active beforehand.
+- `clearAll()` uses that hint instead of the current active tab if it is less
+  than 15 s old. The hint is used once, then reset.
 
 ### Edit detection
 
@@ -137,123 +147,145 @@ agent edit, whoever made it. The opt-in Claude turn-window mode below only
 
 **Workspace watcher (the only path for agent edits)**
 
-`src/watcher/workspaceWatcher.ts` combines save events with a
-`FileSystemWatcher` for any external write, regardless of which tool made it.
-`src/watcher/baselineScanner.ts` builds the per-folder text-file baseline and
-`src/watcher/baselineStore.ts` stores it, so a newly written file is compared
-against prior content rather than treated as brand new.
-`src/watcher/pathExclusions.ts` (`isExcludedPath`) is the single filter for
-paths that should not be tracked, shared by the scanner and the watcher: they
-must agree, because a file the watcher processes without a baseline looks brand
-new and Revert would delete it. It checks only components inside the workspace
-folder, case-insensitively, and excludes a fixed list of names rather than all
-dot-folders (so `.github/` etc. are tracked): dependency, build-output, VCS and
-tool-cache directories, editor/tool folders (`.vscode`, `.idea`, `.claude`),
-`.env`, and a `packages/` folder next to a `.sln` (legacy NuGet). The file name
-itself counts as a component. As a second guard, the watcher records whether a
-write came from a `create` or a `change` event: a `change` to a file with no
-baseline proves it existed, so it only becomes the baseline and opens no diff,
-unless a `create` for that path was seen within 2 s of it (`recentCreates` /
-`wasCreatedAround`; the `create` can lose the 500 ms debounce slot to its
-`change`). A `create` with no baseline is still treated as a new file, because a
-write-to-temp-then-rename save also reports `create`.
-`src/watcher/writeBurstMeter.ts` decides whether a write is part of a burst (git
-checkout vs AI edits); writes past the burst threshold are held in
-`WorkspaceWatcher`'s `heldWrites` queue for `burstDetectionHoldMs` instead of
-opening a diff immediately — if `GitBranchWatcher` confirms a branch change in
-that window (`notifyExternalBatch()`), held writes are silently dropped;
-otherwise they open normally once the hold expires. `notifyExternalBatch()` also
-clears the in-memory baseline, rescans every folder, and starts a 5 s window in
-which external writes only refresh the baseline and open no diff. A held file
-that is written again stays held and keeps its **first** before-image
-(`resolveOrHold`): the watcher's baseline already contains the first write, so
-taking the before-image from it would hide that write and make Revert stop at
-the in-between version.
+- **Watcher** — `src/watcher/workspaceWatcher.ts` combines save events with a
+  `FileSystemWatcher` for any external write, regardless of which tool made it.
+- **Baseline** — `src/watcher/baselineScanner.ts` builds the per-folder
+  text-file baseline and `src/watcher/baselineStore.ts` stores it, so a newly
+  written file is compared against prior content rather than treated as brand
+  new.
+- **Path exclusions** — `src/watcher/pathExclusions.ts` (`isExcludedPath`) is
+  the single filter for untracked paths.
+  - Shared by the scanner and the watcher. They must agree: a file the watcher
+    processes without a baseline looks brand new, and Revert would delete it.
+  - Checks only path components inside the workspace folder, case-insensitively.
+    The file name itself counts as a component.
+  - Excludes a fixed list of names, not all dot-folders (so `.github/` etc. are
+    tracked):
+    - dependency, build-output, VCS and tool-cache directories
+    - editor/tool folders (`.vscode`, `.idea`, `.claude`)
+    - `.env`
+    - a `packages/` folder next to a `.sln` (legacy NuGet)
+- **`create` vs `change` guard** — the watcher records which event a write came
+  from.
+  - A `change` to a file with no baseline proves the file existed: it only
+    becomes the baseline and opens no diff…
+  - …unless a `create` for that path was seen within 2 s (`recentCreates` /
+    `wasCreatedAround`), since the `create` can lose the 500 ms debounce slot to
+    its `change`.
+  - A `create` with no baseline is still treated as a new file, because a
+    write-to-temp-then-rename save also reports `create`.
+- **Burst hold** — `src/watcher/writeBurstMeter.ts` decides whether a write is
+  part of a burst (git checkout vs AI edits).
+  - Writes past the burst threshold go into `WorkspaceWatcher`'s `heldWrites`
+    queue for `burstDetectionHoldMs` instead of opening a diff immediately.
+  - If `GitBranchWatcher` confirms a branch change in that window
+    (`notifyExternalBatch()`), held writes are silently dropped; otherwise they
+    open normally once the hold expires.
+  - A held file that is written again stays held and keeps its **first**
+    before-image (`resolveOrHold`). The watcher's baseline already contains the
+    first write, so taking the before-image from it would hide that write and
+    make Revert stop at the in-between version.
+- **`notifyExternalBatch()`** — besides dropping held writes, it clears the
+  in-memory baseline, rescans every folder, and starts a 5 s window in which
+  external writes only refresh the baseline and open no diff.
 
 ### Claude turn-window attribution (opt-in, `editAttribution = claudeCodeHooks`)
 
 `src/attribution/` decides whether an external write was Claude's, so files you
-copy in, git, formatters etc. don't open diffs. `claudeHookInstaller.ts` adds
-one `UserPromptSubmit` and one `Stop` hook to `~/.claude/settings.json` (timeout
-30 s; the hook copies its stdin JSON into `~/.claude-diff/claude-events/` and
-must print nothing, because `UserPromptSubmit` stdout reaches Claude's context).
-It owns only entries whose command contains both `claude-diff` and
-`claude-events`.
+copy in, git, formatters etc. don't open diffs.
 
-- **Rule** (`claudeAttribution.ts`, no `vscode` import): a write is Claude's if
-  `turn.start ≤ writeAt ≤ (turn.end ?? start + 3 h) + 10 s` for a turn whose
-  `cwd` is the same as, inside, or a parent of the file's workspace folder (both
-  sides realpath'd, so a mapped drive matches its UNC path). A new
-  `UserPromptSubmit` closes the session's previous open turn.
-- **Why turns, not per-edit events:** the watcher overwrites its baseline
-  *before* asking the gate, so a write wrongly judged "not Claude's" loses its
-  before-image. Claude Code waits for `UserPromptSubmit` before Claude starts,
-  so the turn is always on record by the time the watcher decides (~200 ms after
-  the write), even when the change notice is late.
-- **Recovery:** `WorkspaceWatcher` keeps the before-image of every ignored write
-  (`ignoredWrites`). If a `Stop` arrives for a session with no open turn (its
-  turn-start hook failed), `setupClaudeAttribution.ts` asks the watcher to open
-  diffs for that session's ignored writes since its previous `Stop`.
-  `ClaudeHookSource` polls the events folder every 2 s while the mode is on so
-  this happens when the turn ends; its reads are serialized (overlapping reads
-  would ingest one `Stop` twice) and it catches up on the last 30 min of events
-  at startup.
-- **Assumptions:** nothing but Claude writes workspace files during a Claude
-  turn, and turns are not interrupted with Esc (no `Stop` fires; the turn stays
-  open until the next message or 3 h).
-- **Opt-in prompt:** `offerClaudeCodeHooks` (called at the end of activation)
+- **Hooks** — `claudeHookInstaller.ts` adds one `UserPromptSubmit` and one
+  `Stop` hook to `~/.claude/settings.json`.
+  - Timeout 30 s. The hook copies its stdin JSON into
+    `~/.claude-diff/claude-events/`.
+  - It must print nothing, because `UserPromptSubmit` stdout reaches Claude's
+    context.
+  - The installer owns only entries whose command contains both `claude-diff`
+    and `claude-events`.
+- **Rule** (`claudeAttribution.ts`, no `vscode` import):
+  - A write is Claude's if
+    `turn.start ≤ writeAt ≤ (turn.end ?? start + 3 h) + 10 s` for a turn whose
+    `cwd` is the same as, inside, or a parent of the file's workspace folder.
+  - Both sides are realpath'd, so a mapped drive matches its UNC path.
+  - A new `UserPromptSubmit` closes the session's previous open turn.
+- **Why turns, not per-edit events:**
+  - The watcher overwrites its baseline *before* asking the gate, so a write
+    wrongly judged "not Claude's" loses its before-image.
+  - Claude Code waits for `UserPromptSubmit` before Claude starts, so the turn
+    is always on record by the time the watcher decides (~200 ms after the
+    write), even when the change notice is late.
+- **Recovery:**
+  - `WorkspaceWatcher` keeps the before-image of every ignored write
+    (`ignoredWrites`).
+  - If a `Stop` arrives for a session with no open turn (its turn-start hook
+    failed), `setupClaudeAttribution.ts` asks the watcher to open diffs for that
+    session's ignored writes since its previous `Stop`.
+  - `ClaudeHookSource` polls the events folder every 2 s while the mode is on,
+    so this happens when the turn ends. Its reads are serialized (overlapping
+    reads would ingest one `Stop` twice), and it catches up on the last 30 min
+    of events at startup.
+- **Assumptions:**
+  - Nothing but Claude writes workspace files during a Claude turn.
+  - Turns are not interrupted with Esc (no `Stop` fires; the turn stays open
+    until the next message or 3 h).
+- **Opt-in prompt** — `offerClaudeCodeHooks` (called at the end of activation)
   asks once per user whether to switch to this mode, because it edits the global
-  `~/.claude/settings.json`. It is skipped if the user already set
-  `editAttribution`, and postponed while `~/.claude` doesn't exist. Any answer
-  (Enable, Not now, closing the notification) is recorded in `globalState`
-  (`claude-diff.claudeCodeHooksOfferAnswered`); Enable only updates the user
-  setting, and the setting's change handler installs the hooks.
+  `~/.claude/settings.json`.
+  - Skipped if the user already set `editAttribution`; postponed while
+    `~/.claude` doesn't exist.
+  - Any answer (Enable, Not now, closing the notification) is recorded in
+    `globalState` (`claude-diff.claudeCodeHooksOfferAnswered`).
+  - Enable only updates the user setting; the setting's change handler installs
+    the hooks.
 - Tests: `npm run test:attribution` (compiles, then runs
   `scripts/test-attribution.js`, including the real hook command).
 
 ### Sound notifications (unrelated to diff detection)
 
-`src/commands/soundNotifications.ts` (`applySoundNotifications`) writes or
-removes `Notification`/`Stop` hook entries in `~/.claude/settings.json` (Windows
-only, via PowerShell `SoundPlayer`). `extension.ts` calls it whenever
-`claude-diff.soundNotificationsEnabled` changes. It only ever touches its own
-entries under those two keys — commands containing both
-`System.Media.SoundPlayer` and the trailing `# claude-diff` PowerShell comment —
-preserving any other hooks already present in the file, including the user's own
-SoundPlayer hooks.
+- `src/commands/soundNotifications.ts` (`applySoundNotifications`) writes or
+  removes `Notification`/`Stop` hook entries in `~/.claude/settings.json`
+  (Windows only, via PowerShell `SoundPlayer`).
+- `extension.ts` calls it whenever `claude-diff.soundNotificationsEnabled`
+  changes.
+- It only ever touches its own entries under those two keys: commands containing
+  both `System.Media.SoundPlayer` and the trailing `# claude-diff` PowerShell
+  comment. Any other hooks in the file are preserved, including the user's own
+  SoundPlayer hooks.
 
 ### Uninstall cleanup
 
-`src/uninstall.ts` runs through the `vscode:uninstall` script after the
-extension is fully uninstalled (on the next VS Code restart), in plain Node — it
-must not import anything that imports `vscode`. It removes the attribution
-hooks, the sound hooks and `~/.claude-diff/`, and keeps the
-`settings.json.claude-diff.bak` backup.
+- `src/uninstall.ts` runs through the `vscode:uninstall` script after the
+  extension is fully uninstalled (on the next VS Code restart).
+- It runs in plain Node, so it must not import anything that imports `vscode`.
+- It removes the attribution hooks, the sound hooks and `~/.claude-diff/`, and
+  keeps the `settings.json.claude-diff.bak` backup.
 
 ### Git branch watcher
 
-`src/watcher/gitBranchWatcher.ts` watches each workspace root's `.git/HEAD`
-(resolving `gitdir:` for worktrees/submodules). On a HEAD ref change (branch
-switch / checkout / detached) it clears all pending diffs
-(`DiffManager.clearAll`) so stale snapshots aren't compared against a different
-branch's working tree. That content-compare path deliberately does **not** react
-to pull/rebase/reset on the same branch (those change `refs/heads/<branch>`, not
-HEAD's content) to avoid wiping pending state on every commit. Instead,
-`pull`/`merge`/`rebase`/`reset` on the same branch are confirmed via a second,
-narrower source: the same watcher also tails `.git/logs/HEAD` (reflog) and
-matches the action label git appends to the last line (`pull:`, `merge …`,
-`rebase (finish): …`, `reset: …`); on a match it calls
-`workspaceWatcher.notifyExternalBatch()` — silently dropping burst-held writes
-and rebuilding the baseline — **without** clearing already-open pending diffs,
-since those are unaffected by a same-branch pull/rebase/reset.
-`commit`/`checkout` are excluded from that regex on purpose (commit shouldn't
-suppress anything; checkout-to-another-ref is already handled by the
-HEAD-content path above).
+`src/watcher/gitBranchWatcher.ts` watches each workspace root's git state
+(resolving `gitdir:` for worktrees/submodules) through two sources:
 
-Each root's HEAD content is also stored in workspace state
-(`claude-diff.lastHeadByFolder`). If HEAD differs at startup, the branch changed
-while VS Code was closed: the watcher calls `notifyExternalBatch()` and clears
-all pending diffs, as for a live branch change.
+- **`.git/HEAD` content — branch changes**
+  - On a HEAD ref change (branch switch / checkout / detached) it clears all
+    pending diffs (`DiffManager.clearAll`), so stale snapshots aren't compared
+    against a different branch's working tree.
+  - It deliberately does **not** react to pull/rebase/reset on the same branch
+    (those change `refs/heads/<branch>`, not HEAD's content), to avoid wiping
+    pending state on every commit.
+- **`.git/logs/HEAD` (reflog) — same-branch pull/merge/rebase/reset**
+  - Tails the reflog and matches the action label git appends to the last line
+    (`pull:`, `merge …`, `rebase (finish): …`, `reset: …`).
+  - On a match it calls `workspaceWatcher.notifyExternalBatch()` (silently
+    dropping burst-held writes and rebuilding the baseline) **without** clearing
+    already-open pending diffs, which a same-branch pull/rebase/reset doesn't
+    affect.
+  - `commit`/`checkout` are excluded from the regex on purpose: commit shouldn't
+    suppress anything, and checkout to another ref is already handled by the
+    HEAD-content path.
+- **Startup check** — each root's HEAD content is stored in workspace state
+  (`claude-diff.lastHeadByFolder`). If HEAD differs at startup, the branch
+  changed while VS Code was closed: the watcher calls `notifyExternalBatch()`
+  and clears all pending diffs, as for a live branch change.
 
 ### UI composition
 
@@ -262,24 +294,28 @@ all pending diffs, as for a live branch change.
   revert file, accept file.
 - **Pending Files view** — `src/views/pendingFilesPanel.ts`
   (`PendingFilesPanel`, view id `claude-diff.pendingFiles`) in the "Claude Diff"
-  Activity Bar container. A webview tree of pending files with `+/−` counts from
-  `DiffManager.getDiffPreviewMetadata()` (computed in the extension host; file
-  contents never reach the webview), icons from `media/file-icons/`. It recounts
-  on `onDidChangeDiffs` (a file became or stopped being pending) and, 250 ms
-  after the last one, on `onDidChangePendingContent` — an already-pending file's
-  content changed: `WorkspaceWatcher` calls `notifyPendingContentChanged()` when
-  it skips a write to a pending file (no document event fires if no editor has
-  it open), and `onDocumentSettled` fires it when a saved/reloaded pending file
-  still differs from its snapshot. Clicking a file calls `openDiff`. View title
-  buttons: Accept All Files (`acceptAllChanges`) and a gear (`openSettings`,
-  opens Settings filtered to this extension).
-
-Pending-file navigation lives in `src/diff/navigationManager.ts`, reachable via
-the `prevFile`/`nextFile` commands, their `Alt+H`/`Alt+L` keybindings and the
-diff title-bar buttons. `updatePendingContext` in `extension.ts` keeps two
-context keys in sync via `DiffManager.onDidChangeDiffs` and tab-change events:
-`claude-diff.hasPendingDiff` (any pending file) and
-`claude-diff.activeIsPendingDiff` (the active tab is a pending diff).
+  Activity Bar container.
+  - A webview tree of pending files with icons from `media/file-icons/` and
+    `+/−` counts from `DiffManager.getDiffPreviewMetadata()` (computed in the
+    extension host; file contents never reach the webview).
+  - Recounts on `onDidChangeDiffs` (a file became or stopped being pending).
+  - Also recounts, 250 ms after the last one, on `onDidChangePendingContent` (an
+    already-pending file's content changed). That event fires when:
+    - `WorkspaceWatcher` skips a write to a pending file
+      (`notifyPendingContentChanged()`; no document event fires if no editor has
+      it open);
+    - `onDocumentSettled` sees a saved/reloaded pending file that still differs
+      from its snapshot.
+  - Clicking a file calls `openDiff`.
+  - View title buttons: Accept All Files (`acceptAllChanges`) and a gear
+    (`openSettings`, opens Settings filtered to this extension).
+- **Navigation** — `src/diff/navigationManager.ts`, reachable via the
+  `prevFile`/`nextFile` commands, their `Alt+H`/`Alt+L` keybindings and the diff
+  title-bar buttons.
+- **Context keys** — `updatePendingContext` in `extension.ts` keeps two in sync
+  via `DiffManager.onDidChangeDiffs` and tab-change events:
+  - `claude-diff.hasPendingDiff` (any pending file)
+  - `claude-diff.activeIsPendingDiff` (the active tab is a pending diff)
 
 ### Configurable text-file detection
 
@@ -291,12 +327,13 @@ custom-only.
 
 ### Important implementation constraints
 
-- Path normalization is load-bearing: paths go through
-  `vscode.Uri.file(...).fsPath` and are lowercased on Windows before comparison.
-  `canonicalCasePath` (via `fs.realpathSync.native`) is used when calling VS
-  Code APIs so tab titles show the on-disk case. Snapshot URIs are built from
-  the canonical-case file URI; the provider maps them back through
-  `normalizePath`.
+- **Path normalization is load-bearing.**
+  - Paths go through `vscode.Uri.file(...).fsPath` and are lowercased on Windows
+    before comparison.
+  - `canonicalCasePath` (via `fs.realpathSync.native`) is used when calling VS
+    Code APIs so tab titles show the on-disk case.
+  - Snapshot URIs are built from the canonical-case file URI; the provider maps
+    them back through `normalizePath`.
 - Snapshot persistence is designed to survive restarts; changes to snapshot
   shape or cleanup affect restore logic (including restored diff tabs) as well
   as live diffing.
