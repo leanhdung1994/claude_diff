@@ -53,11 +53,10 @@ editor while keeping enough per-file state to accept or revert the whole file.
 
 ### Diff rendering — VS Code's built-in diff editor
 
-- `DiffManager.openDiff` calls
-  `vscode.diff(left, right, '<name> (AI changes)')` (`'<name> (new file, AI)'`
-  for a file the agent created). The **right/modified side**
-  is the real file (`file:` URI), so editing, saving, undo, language features
-  and keybindings are VS Code's own.
+- `DiffManager.openDiff` calls `vscode.diff(left, right, '<name> (AI changes)')`
+  (`'<name> (new file, AI)'` for a file the agent created). The **right/modified
+  side** is the real file (`file:` URI), so editing, saving, undo, language
+  features and keybindings are VS Code's own.
 - The **left/original side** is a read-only virtual document on the
   `claude-diff-original:` scheme (`src/diff/snapshotUri.ts`). The URI is the
   file URI with only the scheme swapped, so it keeps the file name and language.
@@ -125,9 +124,9 @@ the next pending file's diff opens.
 Because a checkout's writes open diffs asynchronously and race for the active
 tab, `WorkspaceWatcher.resolveOrHold` calls `markActiveTabBeforeAutoOpen()` on
 the first write of each cluster (writes more than 500 ms apart start a new one),
-recording the tab that was really active beforehand; `clearAll()` uses that
-hint instead of the current active tab if it is less than 15 s old. The hint is
-used once, then reset.
+recording the tab that was really active beforehand; `clearAll()` uses that hint
+instead of the current active tab if it is less than 15 s old. The hint is used
+once, then reset.
 
 ### Edit detection
 
@@ -156,20 +155,20 @@ write came from a `create` or a `change` event: a `change` to a file with no
 baseline proves it existed, so it only becomes the baseline and opens no diff,
 unless a `create` for that path was seen within 2 s of it (`recentCreates` /
 `wasCreatedAround`; the `create` can lose the 500 ms debounce slot to its
-`change`). A `create` with no baseline is still treated as a new file, because
-a write-to-temp-then-rename save also reports `create`.
+`change`). A `create` with no baseline is still treated as a new file, because a
+write-to-temp-then-rename save also reports `create`.
 `src/watcher/writeBurstMeter.ts` decides whether a write is part of a burst (git
 checkout vs AI edits); writes past the burst threshold are held in
 `WorkspaceWatcher`'s `heldWrites` queue for `burstDetectionHoldMs` instead of
 opening a diff immediately — if `GitBranchWatcher` confirms a branch change in
 that window (`notifyExternalBatch()`), held writes are silently dropped;
-otherwise they open normally once the hold expires. `notifyExternalBatch()`
-also clears the in-memory baseline, rescans every folder, and starts a 5 s
-window in which external writes only refresh the baseline and open no diff. A
-held file that is written
-again stays held and keeps its **first** before-image (`resolveOrHold`): the
-watcher's baseline already contains the first write, so taking the before-image
-from it would hide that write and make Revert stop at the in-between version.
+otherwise they open normally once the hold expires. `notifyExternalBatch()` also
+clears the in-memory baseline, rescans every folder, and starts a 5 s window in
+which external writes only refresh the baseline and open no diff. A held file
+that is written again stays held and keeps its **first** before-image
+(`resolveOrHold`): the watcher's baseline already contains the first write, so
+taking the before-image from it would hide that write and make Revert stop at
+the in-between version.
 
 ### Claude turn-window attribution (opt-in, `editAttribution = claudeCodeHooks`)
 
@@ -302,9 +301,9 @@ custom-only.
   shape or cleanup affect restore logic (including restored diff tabs) as well
   as live diffing.
 - Snapshots keep the file's original EOL; hunk comparisons are done on
-  LF-normalised text (`src/diff/eol.ts`). Files are read and snapshots stored
-  as UTF-8 strings, so Revert does not restore a file in another encoding byte
-  for byte.
+  LF-normalised text (`src/diff/eol.ts`). Files are read and snapshots stored as
+  UTF-8 strings, so Revert does not restore a file in another encoding byte for
+  byte.
 
 ## Settings (contributed configuration)
 
