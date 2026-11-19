@@ -274,6 +274,20 @@ console.log('settings.json installer');
   ok(JSON.stringify(JSON.parse(off)) === JSON.stringify(userPost), 'perFile → turn → off restores the original');
   const offDirect = I.computeHookSettings(pf.content, 'off', 'linux').content;
   ok(JSON.stringify(JSON.parse(offDirect)) === JSON.stringify(userPost), 'off (uninstall) removes all three entries');
+
+  // Values we don't understand are the user's: never delete them, never crash.
+  // (The note carries both markers so 'off' gets past its no-op shortcut.)
+  const odd = JSON.stringify({ note: 'claude-diff claude-events', hooks: { PostToolUse: { matcher: 'Write' } } });
+  for (const m of ['turn', 'perFile', 'off']) {
+    const r = I.computeHookSettings(odd, m, 'linux');
+    ok(r.parseError && !r.changed, `non-array PostToolUse value → refuse to write (${m})`);
+  }
+  const withNull = JSON.stringify({ hooks: { PostToolUse: [null, { hooks: [null, { type: 'command', command: 'x' }] }] } });
+  const rn = I.computeHookSettings(withNull, 'perFile', 'linux');
+  ok(!rn.parseError && JSON.parse(rn.content).hooks.PostToolUse.length === 3,
+    'null hook entries are kept, not a crash');
+  ok(JSON.stringify(JSON.parse(I.computeHookSettings(rn.content, 'off', 'linux').content)) === withNull,
+    '…and removing ours afterwards restores them exactly');
 }
 
 (async () => {

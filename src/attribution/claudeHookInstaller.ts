@@ -85,9 +85,11 @@ function hookCommand(platform: string): HookCommand {
   };
 }
 
-function isOurs(group: HookGroup): boolean {
-  return (group.hooks ?? []).some(
-    h => typeof h.command === 'string' && h.command.includes(OWNER_MARKER) && h.command.includes(EVENTS_MARKER)
+function isOurs(group: unknown): boolean {
+  if (!group || typeof group !== 'object') { return false; }
+  const hooks = (group as HookGroup).hooks;
+  return Array.isArray(hooks) && hooks.some(
+    h => !!h && typeof h.command === 'string' && h.command.includes(OWNER_MARKER) && h.command.includes(EVENTS_MARKER)
   );
 }
 
@@ -138,6 +140,12 @@ export function computeHookSettings(
   const hooks = (settings['hooks'] && typeof settings['hooks'] === 'object' && !Array.isArray(settings['hooks']))
     ? { ...(settings['hooks'] as Record<string, unknown>) }
     : {};
+
+  // A value we don't understand under an event we manage (not an array) is
+  // the user's: rewriting the event would delete it. Refuse instead.
+  if (OWNED_EVENTS.some(e => hooks[e] !== undefined && !Array.isArray(hooks[e]))) {
+    return { content: raw, changed: false, parseError: true };
+  }
 
   const desired = desiredGroups(platform, mode);
   for (const eventName of OWNED_EVENTS) {

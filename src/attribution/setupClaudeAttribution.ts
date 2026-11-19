@@ -191,7 +191,8 @@ export function setupClaudeEditAttribution(
     runDecideHeld(enabled ? undefined : () => 'agent');
     if (result === 'parseError') {
       void vscode.window.showErrorMessage(
-        'Diff Review for Claude Code: ~/.claude/settings.json is not valid JSON, so the Claude Code hook was not ' +
+        'Diff Review for Claude Code: ~/.claude/settings.json is not valid JSON, or one of its UserPromptSubmit/Stop/' +
+        'PostToolUse hook entries is not a list, so the Claude Code hooks were not ' +
         (enabled ? 'installed' : 'removed') + '. Fix the file and toggle the setting again.'
       );
     } else if (result === 'writeError') {
