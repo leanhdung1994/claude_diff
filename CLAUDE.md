@@ -99,8 +99,9 @@ editor while keeping enough per-file state to accept or revert the whole file.
   - The provider is registered synchronously at the top of `activateExtension`.
   - `closeStaleDiffTabs()` closes restored tabs whose snapshot is gone.
   - `DiffManager.dispose()` therefore never closes tabs.
-- **Closing a diff** — accept/revert/clearAll/acceptAllPending **open the plain
-  text editor first, then close the diff tab** (`reopenAsTextEditor` →
+- **Closing a diff** — when they reopen the file (see "Diff state model" for
+  when accept/revert do), accept/revert/clearAll/acceptAllPending **open the
+  plain text editor first, then close the diff tab** (`reopenAsTextEditor` →
   `closeDiffTabs`).
   - Why: closing the last editor of a document with unsaved edits would
     otherwise prompt save/discard.
@@ -143,7 +144,19 @@ Accept and revert are intentionally asymmetric:
   agent's version).
 - **Revert** writes the snapshot back to disk (or deletes a file the agent
   created).
-- After either, the next pending file's diff opens.
+- After either, `handOver` opens the next pending file's diff **in the same
+  group** (explicit `viewColumn`, even if that file is open as text
+  elsewhere). The plain file is reopened in the diff's group only when:
+  1. no other file is pending;
+  2. the diff has unsaved edits (Accept only — Revert overwrites them), since
+     closing the last editor of a dirty document prompts save/discard;
+  3. the file was open as a text tab when its diff opened (`hadTextTab`,
+     in memory only, so not after a reload).
+
+  Otherwise the next diff opens **before** the old one closes, so the group
+  never empties (also for Revert of a created file). If `openDiff` shows
+  nothing (the next file has no change left), the plain file is reopened as
+  a fallback. This keeps a queue of reviews from piling up plain tabs.
 
 `clearAll()` (git branch change) reopens only the active diff as a plain editor.
 

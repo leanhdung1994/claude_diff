@@ -75,6 +75,12 @@ export class DiffManager implements vscode.Disposable {
   private readonly resolving = new Set<string>();
   /** Paths whose openDiff() is in flight. */
   private readonly opening = new Set<string>();
+  /**
+   * Pending files that were open as a text tab when their diff opened (the
+   * diff replaced it). Accept/Revert give that tab back even when another
+   * diff follows. In memory only: after a reload the tab is not given back.
+   */
+  private readonly hadTextTab = new Set<string>();
 
   /**
    * filePath (normalized) của tab đang active NGAY TRƯỚC khi WorkspaceWatcher
@@ -166,13 +172,13 @@ export class DiffManager implements vscode.Disposable {
       // A newly-created empty file is still pending: Revert must delete it and
       // Accept must keep it. There is simply no text hunk to render.
       if (!snapshot.fileExistedBefore) { return false; }
-      this.snapshots.delete(absPath);
-      void this.store.save(this.snapshots);
+      this.forget(absPath);
       this._onDidChangeDiffs.fire();
       return false;
     }
 
     const textTabs = this.findTextTabs(absPath);
+    if (textTabs.length > 0) { this.hadTextTab.add(absPath); }
     const textTab = textTabs.find((tab) => tab.group.isActive)
       ?? textTabs.find((tab) => tab.isActive)
       ?? textTabs[0];
@@ -255,22 +261,17 @@ export class DiffManager implements vscode.Disposable {
 
     const nextTarget = this.nextPendingAfter(absPath);
     const view = this.captureViewState(absPath);
+    // Unsaved edits in the diff: closing the last editor showing that
+    // document would make VS Code ask to save or discard, so keep it open.
+    const hasUnsavedEdits = this.findDiffTabs(absPath).some((tab) => tab.isDirty);
+    const reopen = !nextTarget || hasUnsavedEdits || this.hadTextTab.has(absPath);
 
     this.resolving.add(absPath);
     try {
-      this.snapshots.delete(absPath);
-      void this.store.save(this.snapshots);
-      // Open the plain editor BEFORE closing the diff: if the diff's modified
-      // side has unsaved edits, closing the last editor showing that document
-      // would make VS Code ask to save or discard.
-      await this.reopenAsTextEditor(absPath, view);
-      await this.closeDiffTabs(absPath);
+      this.forget(absPath);
+      await this.handOver(absPath, view, nextTarget, reopen);
     } finally {
       this.resolving.delete(absPath);
-    }
-
-    if (nextTarget) {
-      await this.openDiff(nextTarget, { viewColumn: view?.viewColumn });
     }
     this._onDidChangeDiffs.fire();
   }
@@ -286,6 +287,9 @@ export class DiffManager implements vscode.Disposable {
 
     const nextTarget = this.nextPendingAfter(absPath);
     const view = this.captureViewState(absPath);
+    // No unsaved-edits case: the revert overwrites and saves the document.
+    // A file the agent created is deleted, so there is nothing to reopen.
+    const reopen = snapshot.fileExistedBefore && (!nextTarget || this.hadTextTab.has(absPath));
 
     this.resolving.add(absPath);
     try {
@@ -295,20 +299,49 @@ export class DiffManager implements vscode.Disposable {
         await this.deleteFile(absPath);
       }
 
-      this.snapshots.delete(absPath);
-      void this.store.save(this.snapshots);
-      if (snapshot.fileExistedBefore) {
-        await this.reopenAsTextEditor(absPath, view);
-      }
-      await this.closeDiffTabs(absPath);
+      this.forget(absPath);
+      await this.handOver(absPath, view, nextTarget, reopen);
     } finally {
       this.resolving.delete(absPath);
     }
-
-    if (nextTarget) {
-      await this.openDiff(nextTarget, { viewColumn: view?.viewColumn });
-    }
     this._onDidChangeDiffs.fire();
+  }
+
+  /**
+   * Replace a just-resolved file's diff tabs. The next pending diff opens in
+   * the same group (`view.viewColumn`) so working through the queue stays in
+   * one place, even when the next file is open as text elsewhere.
+   *
+   * - `reopen`: the plain file opens in the diff's group (cursor/scroll kept),
+   *   then the diff closes, then the next diff opens in front of it.
+   * - otherwise: the next diff opens first and the old diff closes after, so
+   *   the group never empties (VS Code would remove it and move focus to
+   *   another group). If no next diff could be shown, fall back to the plain
+   *   file (a no-op when it was deleted).
+   */
+  private async handOver(
+    absPath: string,
+    view: ViewState | undefined,
+    nextTarget: string | undefined,
+    reopen: boolean
+  ): Promise<void> {
+    const viewColumn = view?.viewColumn;
+    if (reopen) {
+      await this.reopenAsTextEditor(absPath, view);
+      await this.closeDiffTabs(absPath);
+      if (nextTarget) { await this.openDiff(nextTarget, { viewColumn }); }
+      return;
+    }
+    const shown = nextTarget ? await this.openDiff(nextTarget, { viewColumn }) : false;
+    if (!shown) { await this.reopenAsTextEditor(absPath, view); }
+    await this.closeDiffTabs(absPath);
+  }
+
+  /** Drop a file's pending state: snapshot (persisted) and tab bookkeeping. */
+  private forget(absPath: string): void {
+    this.snapshots.delete(absPath);
+    this.hadTextTab.delete(absPath);
+    void this.store.save(this.snapshots);
   }
 
   async acceptAllPending(): Promise<number> {
@@ -316,6 +349,7 @@ export class DiffManager implements vscode.Disposable {
     const activePath = this.getActiveDiffPath();
     const view = activePath ? this.captureViewState(activePath) : undefined;
     this.snapshots.clear();
+    this.hadTextTab.clear();
     void this.store.save(this.snapshots);
     if (activePath) {
       await this.reopenAsTextEditor(activePath, view);
@@ -442,6 +476,7 @@ export class DiffManager implements vscode.Disposable {
     const view = activeDiffPath ? this.captureViewState(activeDiffPath) : undefined;
 
     this.snapshots.clear();
+    this.hadTextTab.clear();
     await this.store.clear();
 
     if (activeDiffPath) {
@@ -660,8 +695,7 @@ export class DiffManager implements vscode.Disposable {
         : undefined;
       this.resolving.add(absPath);
       try {
-        this.snapshots.delete(absPath);
-        void this.store.save(this.snapshots);
+        this.forget(absPath);
         if (view) {
           await this.reopenAsTextEditor(absPath, view, { preserveFocus: true });
         }
