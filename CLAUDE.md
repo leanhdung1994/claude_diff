@@ -254,15 +254,19 @@ turn (Quarto preview, formatters) don't open diffs.
     hasn't edited anything yet), which falls back to the turn window rather
     than silently dropping its edits.
 - **Holding** — a `later` write is stored in `ignoredWrites` like an ignored
-  one (earliest before-image per file), logged as held.
+  one (earliest before-image per file), flagged `undecided`, logged as held.
   - `onDecisionsChanged` (on `PostToolUse`, `Stop`, a prompt closing an
     interrupted turn, a turn expiring at `maxOpenMs`) triggers
-    `recoverIgnoredWrites` with "now Claude's" as the match. Debounced per batch
-    of events.
+    `decideHeldWrites`, debounced per batch of events. It re-classifies only
+    `undecided` writes: Claude's open a diff, the rest are marked decided.
+    Decided (ignored) writes are reopened only by missed-turn-start recovery.
   - When a new write is judged Claude's while an earlier write of the same file
     is still held, `takeEarliestAgentWrite` uses the earlier before-image, so
     the diff doesn't hide Claude's first edit.
-  - Switching modes re-decides held writes under the rule now in force.
+  - `openRemembered` keeps the entry until it has read the file, so a write
+    arriving during that read still finds the earliest before-image.
+  - Switching modes decides the still-held writes under the mode now in force
+    (`allExternalWrites`: all open). Already-ignored writes stay ignored.
 - **Latency** — `ClaudeHookSource.start()` `fs.watch`es the events folder
   (50 ms debounce, 2 s poll as backup), so a claim opens the held diff ~0.3 s
   after Claude's write.

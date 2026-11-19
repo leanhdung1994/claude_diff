@@ -62,13 +62,22 @@ export interface EditAttribution {
    * remembered ignored write that `match` accepts and returns how many.
    */
   setRecoveryHandler?(handler: (match: (absPath: string, eventAt: number) => boolean) => Promise<number>): void;
+  /**
+   * Lets the gate decide the writes it answered `later` for. The handler
+   * classifies every still-undecided write again (with `classify`, default
+   * `classifyWriteNow`), opens diffs for the agent's, marks the others as
+   * ignored for good, and returns how many diffs it opened.
+   */
+  setHeldWritesHandler?(handler: (classify?: (absPath: string, eventAt: number) => AgentWriteVerdict) => Promise<number>): void;
 }
 
-/** Before-image of a write the attribution gate ignored, kept for recovery. */
+/** Before-image of a write the attribution gate ignored or held, kept for recovery. */
 interface IgnoredWrite {
   before: string;
   existed: boolean;
   eventAt: number;
+  /** Held (`later`) and not decided yet. Decided writes are only reopened by missed-turn recovery. */
+  undecided: boolean;
 }
 
 export class WorkspaceWatcher {
@@ -130,6 +139,7 @@ export class WorkspaceWatcher {
     this.snapshots = new BaselineStore();
     this.baselineScanner = new BaselineScanner(this.snapshots);
     this.attribution?.setRecoveryHandler?.(match => this.recoverIgnoredWrites(match));
+    this.attribution?.setHeldWritesHandler?.(classify => this.decideHeldWrites(classify));
   }
 
   start(): void {
@@ -566,7 +576,11 @@ export class WorkspaceWatcher {
     return Math.abs(createdAt - eventAt) <= WorkspaceWatcher.CREATE_MATCH_MS;
   }
 
-  private async isAgentWrite(absPath: string, eventAt: number, ignored: IgnoredWrite): Promise<boolean> {
+  private async isAgentWrite(
+    absPath: string,
+    eventAt: number,
+    ignored: Omit<IgnoredWrite, 'undecided'>
+  ): Promise<boolean> {
     if (!this.attribution?.isEnabled()) { return true; }
     let verdict: AgentWriteVerdict;
     try {
@@ -577,7 +591,7 @@ export class WorkspaceWatcher {
     if (verdict === 'agent') { return true; }
     // Ignored or undecided: either way keep the before-image, so the write
     // can still be reclaimed (missed turn start, or a later claim / turn end).
-    this.rememberIgnoredWrite(absPath, ignored);
+    this.rememberIgnoredWrite(absPath, { ...ignored, undecided: verdict === 'later' });
     if (verdict === 'later') {
       this.attribution.onUndecidedWrite?.(absPath);
     } else {
@@ -586,13 +600,43 @@ export class WorkspaceWatcher {
     return false;
   }
 
-  /** Removes and returns the earliest remembered write of `absPath` the gate now counts as the agent's. */
+  /**
+   * Removes and returns the earliest still-held write of `absPath` the gate
+   * now counts as the agent's. Writes already decided as ignored are skipped:
+   * they belong to other programs, and must stay out of the agent's diff.
+   */
   private takeEarliestAgentWrite(absPath: string): IgnoredWrite | undefined {
     const list = this.ignoredWrites.get(absPath);
     if (!list || !this.attribution) { return undefined; }
-    const hit = list.find(w => this.attribution!.classifyWriteNow(absPath, w.eventAt) === 'agent');
+    const hit = list.find(w => w.undecided && this.attribution!.classifyWriteNow(absPath, w.eventAt) === 'agent');
     if (hit) { this.ignoredWrites.delete(absPath); }
     return hit;
+  }
+
+  /**
+   * Classify every held (`later`) write again. The agent's open a diff from
+   * the earliest one's before-image; ignored ones are marked decided, so no
+   * later re-check (e.g. after a mode switch) can reopen them.
+   */
+  private async decideHeldWrites(
+    classify: (absPath: string, eventAt: number) => AgentWriteVerdict =
+      (p, at) => this.attribution?.classifyWriteNow(p, at) ?? 'agent'
+  ): Promise<number> {
+    let opened = 0;
+    for (const [absPath, list] of Array.from(this.ignoredWrites)) {
+      let hit: IgnoredWrite | undefined;
+      for (const w of list) {
+        if (!w.undecided) { continue; }
+        const verdict = classify(absPath, w.eventAt);
+        if (verdict === 'notAgent') {
+          w.undecided = false;
+        } else if (verdict === 'agent' && !hit) {
+          hit = w;
+        }
+      }
+      if (hit && await this.openRemembered(absPath, hit)) { opened++; }
+    }
+    return opened;
   }
 
   /** Forget a file's remembered writes, if `hit` is still among them. */
@@ -624,33 +668,40 @@ export class WorkspaceWatcher {
     let opened = 0;
     for (const [absPath, list] of Array.from(this.ignoredWrites)) {
       const hit = list.find(w => match(absPath, w.eventAt));
-      if (!hit) { continue; }
-      if (this.diffManager.hasPendingDiff(absPath)) {
-        this.ignoredWrites.delete(absPath);
-        continue;
-      }
-
-      // Keep the entry while reading: a new write of this file arriving
-      // meanwhile must still find it (takeEarliestAgentWrite), or its diff
-      // would start from the in-between version.
-      let current: string;
-      try {
-        current = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))).toString('utf8');
-      } catch {
-        this.dropIgnoredWrite(absPath, hit);
-        continue; // deleted since — nothing to show
-      }
-      // Taken meanwhile (by that new write, or a concurrent recovery run).
-      if (!this.ignoredWrites.get(absPath)?.includes(hit)) { continue; }
-      this.ignoredWrites.delete(absPath);
-      if (exceedsLineLimit(current)) { continue; }
-      if (hit.existed && this.normalizeContent(current) === this.normalizeContent(hit.before)) { continue; }
-      // The write may have arrived while this was reading the file.
-      if (this.diffManager.hasPendingDiff(absPath)) { continue; }
-      this.resolveOrHold(absPath, hit.before, current, hit.existed, false);
-      opened++;
+      if (hit && await this.openRemembered(absPath, hit)) { opened++; }
     }
     return opened;
+  }
+
+  /**
+   * Open a diff from a remembered write's before-image to the file on disk,
+   * and forget the file's remembered writes. False if nothing was opened.
+   */
+  private async openRemembered(absPath: string, hit: IgnoredWrite): Promise<boolean> {
+    if (this.diffManager.hasPendingDiff(absPath)) {
+      this.dropIgnoredWrite(absPath, hit);
+      return false;
+    }
+
+    // Keep the entry while reading: a new write of this file arriving
+    // meanwhile must still find it (takeEarliestAgentWrite), or its diff
+    // would start from the in-between version.
+    let current: string;
+    try {
+      current = Buffer.from(await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))).toString('utf8');
+    } catch {
+      this.dropIgnoredWrite(absPath, hit);
+      return false; // deleted since — nothing to show
+    }
+    // Taken meanwhile (by that new write, or a concurrent run).
+    if (!this.ignoredWrites.get(absPath)?.includes(hit)) { return false; }
+    this.ignoredWrites.delete(absPath);
+    if (exceedsLineLimit(current)) { return false; }
+    if (hit.existed && this.normalizeContent(current) === this.normalizeContent(hit.before)) { return false; }
+    // The write may have arrived while this was reading the file.
+    if (this.diffManager.hasPendingDiff(absPath)) { return false; }
+    this.resolveOrHold(absPath, hit.before, current, hit.existed, false);
+    return true;
   }
 
   private triggerDiff(

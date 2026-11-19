@@ -30,6 +30,7 @@ const POLL_INTERVAL_MS = 2000;
 const RECLASSIFY_DEBOUNCE_MS = 20;
 type Mode = 'allExternalWrites' | 'claudeCodeHooks' | 'claudeCodeHooksPerFile';
 type RecoveryHandler = (match: (absPath: string, eventAt: number) => boolean) => Promise<number>;
+type HeldWritesHandler = (classify?: (absPath: string, eventAt: number) => AgentWriteVerdict) => Promise<number>;
 /** globalState: the user answered the one-time "only Claude's edits?" offer. */
 const OFFER_ANSWERED_KEY = 'claude-diff.claudeCodeHooksOfferAnswered';
 
@@ -102,6 +103,7 @@ export function setupClaudeEditAttribution(
   log: (msg: string) => void
 ): EditAttribution {
   let recover: RecoveryHandler | undefined;
+  let decideHeld: HeldWritesHandler | undefined;
   const loggedCwdMismatch = new Set<string>();
   const warnedRecoveredSessions = new Set<string>();
 
@@ -120,20 +122,25 @@ export function setupClaudeEditAttribution(
   const source = new ClaudeHookSource(attribution);
   let warnedNoEvents = false;
 
+  /** Decide the held writes; `classify` defaults to the gate's current rule. */
+  function runDecideHeld(classify?: (absPath: string, eventAt: number) => AgentWriteVerdict): void {
+    if (!decideHeld) { return; }
+    void decideHeld(classify)
+      .then(opened => { if (opened > 0) { log(`attribution: opened ${opened} held write(s) now known to be Claude's`); } })
+      .catch(() => {});
+  }
+
   /**
    * Per-file mode: writes held `later` may be decidable now. Open diffs for
-   * those that count as Claude's; the rest stay remembered (still undecided,
-   * or ignored for good). One run per batch of hook events.
+   * those that count as Claude's, mark those that don't as ignored for good,
+   * keep the still-undecided ones. One run per batch of hook events.
    */
   let reclassifyTimer: NodeJS.Timeout | undefined;
   function scheduleReclassify(): void {
     if (getMode() !== 'claudeCodeHooksPerFile' || reclassifyTimer) { return; }
     reclassifyTimer = setTimeout(() => {
       reclassifyTimer = undefined;
-      if (!recover) { return; }
-      void recover((absPath, eventAt) => attribution.classifyWrite(absPath, eventAt) === 'claude')
-        .then(opened => { if (opened > 0) { log(`attribution: opened ${opened} held write(s) now known to be Claude's`); } })
-        .catch(() => {});
+      runDecideHeld();
     }, RECLASSIFY_DEBOUNCE_MS);
   }
   context.subscriptions.push({ dispose: () => { if (reclassifyTimer) { clearTimeout(reclassifyTimer); } } });
@@ -178,11 +185,10 @@ export function setupClaudeEditAttribution(
     const result = applyClaudeAttributionHooks(hookMode);
     log(`attribution:hooks ${hookMode} → ${result}`);
     setPolling(enabled);
-    // Writes held under per-file mode are decided by the rule now in force
-    // (the turn window opens the ones made during a turn).
-    if (enabled && recover) {
-      void recover((absPath, eventAt) => attribution.classifyWrite(absPath, eventAt) === 'claude').catch(() => {});
-    }
+    // Writes still held from per-file mode are decided by the mode now in
+    // force: the turn window opens those made during a turn; with hooks off
+    // every external write counts. Writes already ignored stay ignored.
+    runDecideHeld(enabled ? undefined : () => 'agent');
     if (result === 'parseError') {
       void vscode.window.showErrorMessage(
         'Diff Review for Claude Code: ~/.claude/settings.json is not valid JSON, so the Claude Code hook was not ' +
@@ -228,5 +234,6 @@ export function setupClaudeEditAttribution(
       }
     },
     setRecoveryHandler: (handler) => { recover = handler; },
+    setHeldWritesHandler: (handler) => { decideHeld = handler; },
   };
 }
