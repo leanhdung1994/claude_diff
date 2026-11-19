@@ -8,6 +8,9 @@ let pass = 0; const ok = (c, m) => { assert(c, m); pass++; console.log('  ✓', 
 const n = p => A.normalizeFsPath(p);
 const ev = (event, at, { sid = 's1', cwd = '/ws' } = {}) => A.parseHookEvent(JSON.stringify({
   hook_event_name: event, session_id: sid, cwd }), at);
+const post = (tool, at, file, { sid = 's1', cwd = '/ws' } = {}) => A.parseHookEvent(JSON.stringify({
+  hook_event_name: 'PostToolUse', session_id: sid, cwd, tool_name: tool,
+  tool_input: file ? { file_path: file } : { command: 'echo' } }), at);
 const make = (opts = {}) => new A.ClaudeAttribution({ workspaceFolders: () => [n('/ws')], ...opts });
 const GRACE = A.DEFAULT_TIMINGS.stopGraceMs;
 
@@ -29,9 +32,101 @@ console.log('Turn window');
     'two quick writes to one file in one turn → both Claude');
   ok(a.isClaudeWrite('/ws/doc.qmd', 20000), 'late change notice inside a long turn → Claude');
 }
-ok(['PreToolUse', 'PostToolUse', 'Notification'].every(e =>
+ok(['PreToolUse', 'Notification', 'SubagentStop'].every(e =>
   A.parseHookEvent(JSON.stringify({ hook_event_name: e, session_id: 's1' }), 1) === undefined),
-  'events other than UserPromptSubmit/Stop are not parsed');
+  'events other than UserPromptSubmit/Stop/PostToolUse are not parsed');
+{
+  const a = make();
+  a.ingest(ev('UserPromptSubmit', 1000));
+  a.ingest(post('Edit', 1500, '/ws/claimed.ts'));
+  ok(a.classifyWrite('/ws/other.ts', 1400) === 'claude' && a.classifyWrite('/ws/other.ts', 1400) === 'claude',
+    'turn-window mode ignores claims: any write in the turn → Claude');
+}
+
+console.log('Per-file mode');
+{
+  const a = make({ perFile: () => true });
+  a.ingest(ev('UserPromptSubmit', 1000));
+  ok(a.classifyWrite('/ws/a.R', 1200) === 'later', 'write in an open turn, not claimed yet → later');
+  a.ingest(post('Edit', 1300, '/ws/a.R'));
+  ok(a.classifyWrite('/ws/a.R', 1200) === 'claude', 'claim arrives after the write → Claude when asked again');
+  ok(a.classifyWrite('/ws/a.R', 4000) === 'claude', 'further writes to a claimed file → Claude');
+  ok(a.classifyWrite('/ws/.quarto/x.json', 2000) === 'later', 'unclaimed file in the same open turn → later');
+  a.ingest(ev('Stop', 5000));
+  ok(a.classifyWrite('/ws/.quarto/x.json', 2000) === 'notClaude', 'turn ended without Bash: unclaimed write → NOT Claude');
+  ok(a.classifyWrite('/ws/a.R', 5000 + 59_000) === 'claude', 'late notice for a claimed file within the claim grace → Claude');
+  ok(a.classifyWrite('/ws/a.R', 5000 + 61_000) === 'notClaude', 'claimed file after the claim grace → NOT Claude');
+  ok(a.classifyWrite('/ws/b.R', 999) === 'notClaude', 'write before the turn → NOT Claude');
+}
+{
+  const a = make({ perFile: () => true });
+  a.ingest(ev('UserPromptSubmit', 1000));
+  a.ingest(post('Edit', 1100, '/ws/a.R'));            // proves the session runs the hook
+  ok(a.classifyWrite('/ws/out.csv', 1500) === 'later', 'Bash write before its PostToolUse → later');
+  a.ingest(post('Bash', 1600));
+  ok(a.classifyWrite('/ws/out.csv', 1500) === 'claude', 'turn ran Bash → its unclaimed writes are Claude');
+  ok(a.classifyWrite('/ws/out2.csv', 3000) === 'claude', 'later write in a turn that already ran Bash → Claude at once');
+}
+{
+  const calls = [];
+  const a = make({ perFile: () => true, onDecisionsChanged: () => calls.push(1) });
+  a.ingest(ev('UserPromptSubmit', 1000));
+  a.ingest(post('Edit', 1100, '/ws/a.R'));
+  a.ingest(ev('Stop', 2000));
+  a.ingest(ev('UserPromptSubmit', 3000));             // no earlier turn open: nothing changes
+  ok(calls.length === 2, 'decisions change on PostToolUse and on Stop (not on a plain turn start)');
+  a.ingest(ev('UserPromptSubmit', 4000));             // closes the open turn (Esc case)
+  ok(calls.length === 3, 'next prompt closing an interrupted turn changes decisions');
+}
+{
+  const a = make({ perFile: () => true });
+  a.ingest(ev('UserPromptSubmit', 1000, { sid: 'old' })); // session started before the hook was installed
+  a.ingest(ev('Stop', 2000, { sid: 'old' }));
+  ok(a.classifyWrite('/ws/a.R', 1500) === 'claude', 'session never seen sending PostToolUse → turn-window fallback');
+  ok(a.classifyWrite('/ws/a.R', 2500) === 'claude', 'fallback still honours the Stop grace');
+}
+{
+  const a = make({ perFile: () => true });
+  a.ingest(ev('UserPromptSubmit', 1000, { sid: 'x' }));
+  a.ingest(post('Edit', 1100, '/ws/a.R', { sid: 'x' }));
+  a.ingest(ev('UserPromptSubmit', 1000, { sid: 'y' }));
+  a.ingest(post('Edit', 1200, '/ws/b.R', { sid: 'y' }));
+  a.ingest(ev('Stop', 2000, { sid: 'x' }));
+  ok(a.classifyWrite('/ws/c.R', 1500) === 'later', 'two sessions: undecided while either turn is open');
+  ok(a.classifyWrite('/ws/b.R', 1500) === 'claude', 'two sessions: a claim by either one counts');
+  a.ingest(ev('Stop', 2000, { sid: 'y' }));
+  ok(a.classifyWrite('/ws/c.R', 1500) === 'notClaude', 'two sessions: decided once both turns ended');
+}
+{
+  const a = make({ perFile: () => true, timings: { stopGraceMs: 100, maxOpenMs: 10_000 } });
+  let changed = 0;
+  const b = make({ perFile: () => true, timings: { maxOpenMs: 10_000 }, onDecisionsChanged: () => changed++ });
+  b.ingest(ev('UserPromptSubmit', 1000));
+  b.ingest(post('Edit', 1100, '/ws/a.R'));
+  changed = 0;
+  b.prune(12_000);
+  ok(changed === 1 && b.classifyWrite('/ws/c.R', 1500) === 'notClaude', 'turn expiring at maxOpen decides its held writes');
+  ok(a.timings.claimGraceMs === A.DEFAULT_TIMINGS.claimGraceMs, 'partial timings keep the other defaults');
+}
+{
+  // Mapped drive vs UNC: the claimed path and the written path are compared canonically.
+  const real = p => n(p).replace(n('/alias'), n('/real'));
+  const a = make({ perFile: () => true, workspaceFolders: () => [n('/real/ws')], canonicalize: real });
+  a.ingest(ev('UserPromptSubmit', 1000, { cwd: '/alias/ws' }));
+  a.ingest(post('Edit', 1100, '/alias/ws/a.R', { cwd: '/alias/ws' }));
+  ok(a.classifyWrite('/real/ws/a.R', 1050) === 'claude', 'claim via a mapped path matches the real path');
+}
+{
+  const p = A.parseHookEvent(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 's', tool_name: 'NotebookEdit',
+    tool_input: { notebook_path: '/ws/nb.ipynb' }, tool_response: { big: 'x'.repeat(100) } }), 1);
+  ok(p.toolName === 'NotebookEdit' && p.filePath === n('/ws/nb.ipynb'), 'NotebookEdit: path read from notebook_path');
+  const r = A.parseHookEvent(JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Write',
+    tool_input: { file_path: 'relative.txt' } }), 1);
+  ok(r && r.filePath === undefined, 'relative tool path is ignored');
+  const b = A.parseHookEvent(JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash',
+    tool_input: { command: 'Rscript x.R' } }), 1);
+  ok(b.toolName === 'Bash' && b.filePath === undefined, 'Bash: tool name kept, no path');
+}
 
 console.log('Workspace filter');
 {
