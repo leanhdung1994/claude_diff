@@ -57,14 +57,43 @@ const csc = dir && path.join(dir, 'csc.exe');
   (`isOurs`) and uninstall cleanup still work. Uninstall already removes
   `~/.claude-diff/`.
 
-**Risks and open questions:**
+**Risks and open questions** (checked on this machine, 2026-11-20):
 
-- Unsigned exes built in the user profile may be blocked by AppLocker/WDAC or
-  flagged by antivirus. The fallback above covers this.
-- The legacy `csc.exe` is no longer updated (it still ships).
-- Unverified: how Claude Code launches a hook with no `shell` key on Windows. If
-  it wraps the command in another shell (for example Git Bash), some of the gain
-  is lost. Measure this inside a real Claude session first.
+- **Security software blocking the unsigned helper: not an issue here.**
+
+    | Check                       | Command                                                                                                                                             | Result             |
+    | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+    | Smart App Control           | `Get-MpComputerStatus \| Select SmartAppControlState`                                                                                               | Off                |
+    | AppLocker                   | `Get-AppLockerPolicy -Effective -Xml`                                                                                                               | No rules           |
+    | WDAC for user programs      | `Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard` → `UsermodeCodeIntegrityPolicyEnforcementStatus` | 0 (off)            |
+    | Defender detections         | `Get-MpThreatDetection`                                                                                                                             | None for `hook.exe` |
+
+  The benchmark also built `hook.exe` under `%TEMP%` and ran it 90 times with
+  Defender real-time protection on, without anything stepping in. If Smart App
+  Control were ever turned on, it would block the helper; the fallback to
+  PowerShell covers that.
+- **Legacy `csc.exe`: nothing to check ahead of time.** It ships with Windows
+  but is no longer updated. The registry lookup, compile and test run happen
+  when the mode is enabled, and any failure keeps the PowerShell hook.
+- **Claude Code's launch overhead: half answered.** Claude Code records hook
+  timings in the transcript (`system` entries with subtype
+  `stop_hook_summary` → `hookInfos[].durationMs`). For the current PowerShell
+  hook across about 1,200 `Stop` runs: median about 350 ms (p90 about 440 ms)
+  against 284 ms on its own, so Claude Code adds about 70 ms. Rare outliers
+  reached 3.5 s.
+  - Still open: whether a hook with no `shell` key is wrapped in another shell
+    (for example Git Bash). To measure: copy `hook.exe` to
+    `~/.claude-diff/bin/`, temporarily add a second `Stop` hook that runs it
+    with no `shell` key and writes to a separate folder, do a few turns, and
+    compare the two hooks' `durationMs`.
+
+**Side finding (fixed 2026-11-20).** `~/.claude/settings.json` still had
+`Stop` and `UserPromptSubmit` hooks writing to
+`~/.ai-cli-diff-view/claude-events`, left over from the extension's old name.
+The installer only manages entries containing `claude-diff` and
+`claude-events`, so it never removed them, and each cost about 350 ms per
+turn start and end. They and the `~/.ai-cli-diff-view/` folder were removed by
+hand (backup: `~/.claude/settings.json.before-stale-hook-removal.bak`).
 
 **Related.** This complements the transcript-claims idea, which reads `tool_use`
 entries from the session transcript (`transcript_path` in the hook payload) so
