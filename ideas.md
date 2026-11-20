@@ -122,9 +122,8 @@ entries from the session transcript (`transcript_path` in the hook payload) so
 no per-edit hook is needed. Combined: transcript claims for edits, helper for
 the two turn-boundary hooks.
 
-Benchmark and probe scripts (`bench/hook.cs`, `bench/bench.js`,
-`probe/probe.cs`, `probe/bashcost.js`): the scratchpad of session `fed25485`,
-which may be cleared. The C# source is the 15-line stdin-to-file copy described
+Benchmark scripts (`bench/hook.cs`, `bench/bench.js`): the scratchpad of
+session `fed25485`, which may be cleared. The C# source is the 15-line stdin-to-file copy described
 above.
 
 ## Fourth attribution mode: transcript claims
