@@ -226,3 +226,167 @@ What remains is the cost: a parser for an undocumented format that changes
 between frequent releases, roughly 200–300 lines of tailing code, and unverified
 on-disk timing (the `tool_use` timestamp is creation time, not necessarily when
 the line was flushed).
+
+## Codex CLI support (unified agent attribution)
+
+**Problem.** The hook modes (`claudeCodeHooks`, `claudeCodeHooksPerFile`) only
+recognise Claude Code turns. A Codex turn's edits are ignored as "not the
+agent's" once a hook mode is on.
+
+**Idea.** Install the same kind of hooks into Codex and feed both agents' events
+into one attribution engine. Edits made through shell commands are out of scope
+for Codex: only `apply_patch` edits count.
+
+**Codex hook interface** (docs: <https://learn.chatgpt.com/docs/hooks>; input
+schemas in `openai/codex`, `codex-rs/hooks/schema/generated`):
+
+- User config: `~/.codex/hooks.json` (Windows:
+  `%USERPROFILE%\.codex\hooks.json`). Shape:
+  `{"hooks": {"<Event>": [{"matcher"?, "hooks": [{"type": "command", "command", "timeout"}]}]}}`,
+  the same nesting as Claude's `settings.json`. An optional top-level
+  `description` is ignored. It merges with a `[hooks]` table in `config.toml`;
+  both in one layer makes Codex warn at startup (this machine's `config.toml`
+  has none).
+- Events used: `UserPromptSubmit`, `Stop`, `PostToolUse`, plus `Interrupt`
+  (fires when the user interrupts a main-thread turn; Claude has no equivalent).
+- Matchers are regexes and only apply to tool events. For `apply_patch`, the
+  matchers `Edit` and `Write` also match.
+- Timeouts in seconds (default 600; `Interrupt` and `SessionEnd` max 3). Command
+  hooks are synchronous by default, so `UserPromptSubmit` finishes before the
+  model starts, which the turn window relies on.
+- Plain stdout from `UserPromptSubmit` reaches the model, so the hook must print
+  nothing (same rule as Claude).
+- **Trust:** non-managed hooks are skipped until the user trusts them in
+  `/hooks`. Trust is recorded against a hash of the hook definition, so any
+  change to the command re-asks. `--dangerously-bypass-hook-trust` skips this
+  for one invocation.
+- Subagent hooks carry the parent's `session_id` (docs), like Claude's.
+
+**Live probe** (2026-11-20, codex-cli 0.163.0, Windows): `codex exec` in a
+scratch git repo with a project-level `.codex/hooks.json`, hooking
+`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`
+(`matcher: "*"`), `Stop` and `Interrupt` with a Node script that saved each
+payload plus its process ancestry. Findings:
+
+- **Every payload** has `session_id`, `turn_id`, `cwd`, `hook_event_name`,
+  `transcript_path` (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`), `model`
+  and `permission_mode`. `UserPromptSubmit` has `turn_id` too.
+
+- **Hooks run as** `pwsh.exe -NoProfile -Command "<command>"` (PowerShell 7,
+  child of `codex.exe`). There is no `shell` field.
+
+- **Nested tool calls are hooked.** This Codex runs tools in "code mode": the
+  model calls a JavaScript `exec` tool whose code calls
+  `tools.apply_patch("…")`. The hooks fire for the inner call with
+  `tool_name: "apply_patch"`; no hook fires for the outer `exec`.
+
+- **`apply_patch` payload:**
+
+  ```json
+  "tool_name": "apply_patch",
+  "tool_input": { "command": "*** Begin Patch\n*** Update File: x.py\n@@\n-    retrun a + b\n+    return a + b\n*** End Patch" },
+  "tool_response": "Exit code: 0\nWall time: 1.9 seconds\nOutput:\nSuccess. Updated the following files:\nM x.py\n"
+  ```
+
+  The patch path was relative to `cwd` here. Older sessions on this machine used
+  absolute paths, with either `/` or `\`.
+
+- **Shell commands** report as `tool_name: "Bash"`. `PostToolUse` did not fire
+  when the sandbox failed to start the process
+  (`CreateProcessAsUserW … Access is denied` in a folder under `%TEMP%`).
+
+- **Timing:** `UserPromptSubmit` → edit ≈ 5 s → `PostToolUse` → `Stop` 3 s
+  later. The turn was on record well before the write.
+
+- Project-level hooks ran in an untrusted folder with the bypass flag.
+
+- To rerun:
+  `codex exec -C <dir> -m gpt-6-luna --sandbox workspace-write --dangerously-bypass-hook-trust --json "<prompt>"`.
+  The model in `config.toml` (`gpt-6-sol`) is rejected for `codex exec` with
+  this ChatGPT login. Put the file's content in the prompt; the sandbox couldn't
+  run shell commands under `%TEMP%`.
+
+**Claude vs Codex, for attribution:**
+
+  | Need                | Claude Code                                                 | Codex                                                       |
+  | ------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+  | Config file         | `~/.claude/settings.json` (`hooks` key)                     | `~/.codex/hooks.json` (`hooks` key)                         |
+  | Turn start / end    | `UserPromptSubmit` / `Stop`                                 | `UserPromptSubmit` / `Stop`                                 |
+  | Interrupt           | none, and no `Stop` either                                  | `Interrupt` (`session_id`, `cwd`, `turn_id`)                |
+  | Turn id             | none (`prompt_id` per user prompt)                          | `turn_id` on every event                                    |
+  | Edited file         | `tool_input.file_path` / `notebook_path`, absolute          | parsed from the patch text, may be relative to `cwd`        |
+  | Per-file matcher    | `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash`                | `apply_patch`                                               |
+  | Windows hook shell  | `shell: "powershell"` (Git Bash without it)                 | always `pwsh -NoProfile -Command`                           |
+  | Hook approval       | workspace trust dialog                                      | `/hooks` review, again after any change                     |
+
+**What already fits** (no agent-specific logic):
+
+- `WorkspaceWatcher` and the `EditAttribution` interface: untouched.
+- `parseHookEvent` reads `hook_event_name`, `session_id`, `cwd`: same names.
+- `ClaudeAttribution`: turn windows, `cwd` ↔ workspace matching, missed-turn
+  recovery, `later` / `decideHeldWrites`.
+- `ClaudeHookSource` takes its events folder as a constructor argument.
+- `computeHookSettings` works on the `hooks` object, which has the same shape in
+  both files.
+
+**Changes needed:**
+
+1. **Events folder per agent.** Write Codex events to
+   `~/.claude-diff/codex-events/` and run a second `ClaudeHookSource` feeding
+   the same attribution. Ownership marker for Codex entries: `claude-diff` +
+   `codex-events`. Uninstall already deletes `~/.claude-diff/`.
+2. **Installer for `hooks.json`.** Generalise `computeHookSettings` over (file,
+   marker, events, matcher). Codex adds no `shell` key: the existing PowerShell
+   one-liner (no double quotes in it) should work as the `command`, since Codex
+   wraps it in `pwsh -Command`. Verify that exact string. Only install when
+   `~/.codex` exists. Keep the command byte-stable, because any change makes
+   Codex ask for trust again.
+3. **Claims from patches.** `HookEvent.filePath` → `filePaths: string[]`. For
+   `tool_name === 'apply_patch'`, collect the paths after `*** Add File: `,
+   `*** Update File: `, `*** Delete File: ` and `*** Move to: `, resolving
+   relative ones against the payload's `cwd`. No `Bash` in the Codex matcher: it
+   would run a hook for every shell command, and shell edits are out of scope.
+   Codex shell writes during a turn are then held and dropped at `Stop` in
+   per-file mode.
+4. **`Interrupt`.** Treat it as a turn end. Guard: if Codex also sends `Stop`
+   after an interrupt (not documented), the current code would see a `Stop` with
+   no open turn and run missed-turn recovery for that session. Remember the
+   turns closed by `Interrupt` (`turn_id`) and ignore their `Stop`. More
+   generally, Codex events could be paired by `turn_id` instead of by session.
+5. **Trust UX.** After installing, tell the user to open `/hooks` in Codex and
+   trust the entries. `hasSeenAnyEvent()` is global, so the "no hook event
+   received" warning never fires for an untrusted Codex hook once Claude events
+   exist. Track it per source. A write can't be blamed on one agent, though.
+6. **Setting and messages.** One `editAttribution` value for both agents is
+   simplest. Keep the existing value names so saved settings still work, and
+   reword the descriptions, the offer prompt (`offerClaudeCodeHooks`) and the
+   notifications.
+7. **Uninstall** (`src/uninstall.ts`): also remove the Codex entries from
+   `hooks.json`.
+8. **Tests:** Codex payload cases in `scripts/test-attribution.js` (relative and
+   absolute patch paths, multi-file patch, `Move to`, `Interrupt` followed by
+   `Stop`), and the `hooks.json` installer.
+
+**Unification decisions to make:**
+
+- Rename `ClaudeAttribution` / `ClaudeHookSource` / `claudeHookInstaller` to
+  agent-neutral names, or keep the names and add a Codex adapter.
+- Whether Claude's per-file mode should also stop counting Bash, so both agents
+  follow the same rule.
+- Whether hooks are installed for an agent only when its config folder exists,
+  or behind a per-agent switch.
+
+**Open questions (untested):**
+
+- The trust flow for a user-level hook in the Codex TUI and the Codex VS Code
+  extension (sessions on this machine come from both, originators `codex-tui`
+  and `codex_vscode`).
+- Whether a running Codex session reloads `hooks.json` or needs a restart.
+- The real `Interrupt` payload, and whether `Stop` follows it.
+- Hook cost: every Codex hook pays `pwsh` startup, which the native helper idea
+  above can't avoid (Codex always launches `pwsh`). Not measured.
+
+**Verdict (2026-11-20): feasible, not built.** The probe confirmed the payloads
+carry everything both modes need, including for `apply_patch` nested in code
+mode. Effort is mostly the installer generalisation, the patch-path parser and
+the trust messaging.
