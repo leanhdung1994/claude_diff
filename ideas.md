@@ -61,77 +61,77 @@ const csc = dir && path.join(dir, 'csc.exe');
 
 - **Security software blocking the unsigned helper: not an issue here.**
 
-    | Check                       | Command                                                                                                                                             | Result             |
-    | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-    | Smart App Control           | `Get-MpComputerStatus \| Select SmartAppControlState`                                                                                               | Off                |
-    | AppLocker                   | `Get-AppLockerPolicy -Effective -Xml`                                                                                                               | No rules           |
-    | WDAC for user programs      | `Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard` → `UsermodeCodeIntegrityPolicyEnforcementStatus` | 0 (off)            |
-    | Defender detections         | `Get-MpThreatDetection`                                                                                                                             | None for `hook.exe` |
+  | Check                       | Command                                                                                                                                             | Result              |
+  | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------  |
+  | Smart App Control           | `Get-MpComputerStatus \| Select SmartAppControlState`                                                                                               | Off                 |
+  | AppLocker                   | `Get-AppLockerPolicy -Effective -Xml`                                                                                                               | No rules            |
+  | WDAC for user programs      | `Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard` → `UsermodeCodeIntegrityPolicyEnforcementStatus`       | 0 (off)             |
+  | Defender detections         | `Get-MpThreatDetection`                                                                                                                             | None for `hook.exe` |
 
   The benchmark also built `hook.exe` under `%TEMP%` and ran it 90 times with
   Defender real-time protection on, without anything stepping in. If Smart App
   Control were ever turned on, it would block the helper; the fallback to
   PowerShell covers that.
+
 - **Legacy `csc.exe`: nothing to check ahead of time.** It ships with Windows
   but is no longer updated. The registry lookup, compile and test run happen
   when the mode is enabled, and any failure keeps the PowerShell hook.
-- **Claude Code's launch overhead: answered.** Claude Code records hook
-  timings in the transcript (`system` entries with subtype
-  `stop_hook_summary` → `hookInfos[].durationMs`). For the current PowerShell
-  hook across about 1,200 `Stop` runs: median about 350 ms (p90 about 440 ms)
-  against 284 ms on its own, so Claude Code adds about 70 ms. Rare outliers
-  reached 3.5 s.
+
+- **Claude Code's launch overhead: answered.** Claude Code records hook timings
+  in the transcript (`system` entries with subtype `stop_hook_summary` →
+  `hookInfos[].durationMs`). For the current PowerShell hook across about 1,200
+  `Stop` runs: median about 350 ms (p90 about 440 ms) against 284 ms on its own,
+  so Claude Code adds about 70 ms. Rare outliers reached 3.5 s.
   - **A hook with no `shell` key runs through Git Bash, but that's cheap.**
     Tested 2026-11-20 with Claude Code CLI 2.1.318 (headless `claude -p` in a
-    scratch folder, test hook in that folder's `.claude/settings.local.json`).
-    A probe exe logged its process ancestry as
-    `probe.exe <- bash.exe <- bash.exe <- claude.exe`, with `MSYSTEM=UCRT64`
-    and `SHELL=C:\Program Files\Git\bin\bash.exe`. Then the plain `hook.exe`
-    ran as a second `Stop` hook for three turns:
+    scratch folder, test hook in that folder's `.claude/settings.local.json`). A
+    probe exe logged its process ancestry as
+    `probe.exe <- bash.exe <- bash.exe <- claude.exe`, with `MSYSTEM=UCRT64` and
+    `SHELL=C:\Program Files\Git\bin\bash.exe`. Then the plain `hook.exe` ran as
+    a second `Stop` hook for three turns:
 
-      | Hook                                     | `durationMs` inside Claude Code |
-      | ---------------------------------------- | ------------------------------- |
-      | Current PowerShell hook                  | 323, 346, 331                   |
-      | `hook.exe`, no `shell` key (via Git Bash) | 117, 116, 113                   |
+    | Hook                                      | `durationMs` inside Claude Code |
+    | ----------------------------------------  | ------------------------------- |
+    | Current PowerShell hook                   | 323, 346, 331                   |
+    | `hook.exe`, no `shell` key (via Git Bash) | 117, 116, 113                   |
 
-    Outside Claude: `hook.exe` 42 ms directly, 81 ms through `bash -c`. So
-    the 115 ms is about 40 ms helper + 40 ms Git Bash + 35 ms Claude Code.
-    The real saving is **about 220 ms per hook run**. Bash can't be skipped
-    (`shell: "powershell"` would bring PowerShell's startup back), so about
-    115 ms is the floor for any hook here. On a machine without Git for
-    Windows, Claude Code would use a different shell, so the wrapper cost
-    would differ.
+    Outside Claude: `hook.exe` 42 ms directly, 81 ms through `bash -c`. So the
+    115 ms is about 40 ms helper + 40 ms Git Bash + 35 ms Claude Code. The real
+    saving is **about 220 ms per hook run**. Bash can't be skipped
+    (`shell: "powershell"` would bring PowerShell's startup back), so about 115
+    ms is the floor for any hook here. On a machine without Git for Windows,
+    Claude Code would use a different shell, so the wrapper cost would differ.
 
-**Verdict (2026-11-20): don't build it now.** The helper works and the risks
-are covered, but the saving is small at real usage. Over 30 days, turns that
-made Edit/Write/Bash calls made a median of 2 such calls (p90 7), and
-`PostToolUse` took a median 0.4% of turn time (p90 3.6%). About 220 ms per
-call adds up to roughly 4 minutes a month, plus about the same for the turn
-hooks. Revisit if turns get much more tool-heavy.
+**Verdict (2026-11-20): don't build it now.** The helper works and the risks are
+covered, but the saving is small at real usage. Over 30 days, turns that made
+Edit/Write/Bash calls made a median of 2 such calls (p90 7), and `PostToolUse`
+took a median 0.4% of turn time (p90 3.6%). About 220 ms per call adds up to
+roughly 4 minutes a month, plus about the same for the turn hooks. Revisit if
+turns get much more tool-heavy.
 
-**Side finding (fixed 2026-11-20).** `~/.claude/settings.json` still had
-`Stop` and `UserPromptSubmit` hooks writing to
-`~/.ai-cli-diff-view/claude-events`, left over from the extension's old name.
-The installer only manages entries containing `claude-diff` and
-`claude-events`, so it never removed them, and each cost about 350 ms per
-turn start and end. They and the `~/.ai-cli-diff-view/` folder were removed by
-hand (backup: `~/.claude/settings.json.before-stale-hook-removal.bak`).
+**Side finding (fixed 2026-11-20).** `~/.claude/settings.json` still had `Stop`
+and `UserPromptSubmit` hooks writing to `~/.ai-cli-diff-view/claude-events`,
+left over from the extension's old name. The installer only manages entries
+containing `claude-diff` and `claude-events`, so it never removed them, and each
+cost about 350 ms per turn start and end. They and the `~/.ai-cli-diff-view/`
+folder were removed by hand (backup:
+`~/.claude/settings.json.before-stale-hook-removal.bak`).
 
 **Related.** This complements the transcript-claims idea, which reads `tool_use`
 entries from the session transcript (`transcript_path` in the hook payload) so
 no per-edit hook is needed. Combined: transcript claims for edits, helper for
 the two turn-boundary hooks.
 
-Benchmark scripts (`bench/hook.cs`, `bench/bench.js`): the scratchpad of
-session `fed25485`, which may be cleared. The C# source is the 15-line stdin-to-file copy described
-above.
+Benchmark scripts (`bench/hook.cs`, `bench/bench.js`): the scratchpad of session
+`fed25485`, which may be cleared. The C# source is the 15-line stdin-to-file
+copy described above.
 
 ## Fourth attribution mode: transcript claims
 
 **Problem.** Per-file mode learns which files Claude edited from a `PostToolUse`
-hook: one process per Edit/Write/Bash call (about 0.23 s on Windows), plus event
-files that can be several MB because they include `tool_response`. Turn mode is
-cheap but counts every write during a turn (Quarto output, formatters).
+hook: one process per Edit/Write/Bash call (about 0.33 s inside Claude Code on
+Windows), plus event files that include `tool_response`. Turn mode is cheap but
+counts every write during a turn (Quarto output, formatters).
 
 **Idea.** A new `editAttribution` value (for example
 `claudeCodeHooksTranscript`). Keep turn mode's two hooks (`UserPromptSubmit`,
@@ -150,8 +150,8 @@ that Claude Code already writes.
   `tool_result` logged at 49.572 s. So the claim can land *before* the write.
   `PostToolUse` always arrives after it.
 - Subagents log to `<sessionId>/subagents/agent-*.jsonl`, with the parent's
-  `sessionId` plus an `agentId`. That's cleaner than `PostToolUse`, where a
-  subagent's own id forces claiming in every open turn.
+  `sessionId` plus an `agentId`. (`PostToolUse` turned out to do the same; see
+  the verdict below.)
 - Bash `tool_use` entries carry only the command text, so the per-file Bash gap
   is unchanged.
 - No turn-end marker (only `stop_hook_summary`, which exists only because a
@@ -201,3 +201,28 @@ the settings simpler but makes that mode's behaviour harder to explain.
 against a captured sample transcript, then wire it into `ClaudeAttribution`.
 Pairs with the native helper above, which would make the two remaining turn
 hooks cheap too.
+
+**Verdict (2026-11-20): don't build it.** Every Edit/Write/Bash call in the
+transcripts of the last ~5 hours was matched against the hook's event files by
+`tool_use_id` (Claude Code 2.1.328):
+
+  | Question                                          | Result                                                                  |
+  | ------------------------------------------------- | ----------------------------------------------------------------------  |
+  | Does `PostToolUse` miss tool calls?               | No: 75 of 75 calls have their event                                     |
+  | Event file sizes                                  | Edit median 32 KB (max 43 KB), Bash 13 KB, Write 3 KB                   |
+  | Do subagents report their own session id?         | No: all 5 used the parent's `session_id` (plus `agent_id`/`agent_type`) |
+  | Claim delay vs the transcript's `tool_use` entry  | median 0.56 s, p90 1.2 s                                                |
+
+The plan's benefits mostly disappear:
+
+- Removing the per-call hook saves about 6 min/month at real usage, the same
+  order as the native helper.
+- Event files are about 30 KB, not MB-sized.
+- Subagent handling is already clean.
+- Held diffs would open only about 0.5 s sooner.
+- The hook missed nothing, so there's no reliability problem to fix.
+
+What remains is the cost: a parser for an undocumented format that changes
+between frequent releases, roughly 200–300 lines of tailing code, and unverified
+on-disk timing (the `tool_use` timestamp is creation time, not necessarily when
+the line was flushed).

@@ -303,8 +303,10 @@ turn (Quarto preview, formatters) don't open diffs.
   - **Claimed** — the file was named by a `PostToolUse` of the turn
     (`file_path`, or `notebook_path` for NotebookEdit): Claude's. Claims also
     cover late change notices up to `claimGraceMs` (60 s) after the turn ends. A
-    `PostToolUse` whose session id has no open turn (a subagent reporting its
-    own id, or a failed turn-start hook) claims in every open turn instead.
+    `PostToolUse` whose session id has no open turn (a failed turn-start hook,
+    or a subagent reporting its own id — not seen on Claude Code 2.1.328, where
+    subagent payloads carry the parent's `session_id` plus `agent_id`) claims
+    in every open turn instead.
   - **Bash** — once the turn ran Bash, every write of that turn is Claude's (a
     command doesn't say which files it writes). Known gap: other programs'
     writes in such a turn count too.
@@ -330,10 +332,12 @@ turn (Quarto preview, formatters) don't open diffs.
 - **Latency** — `ClaudeHookSource.start()` `fs.watch`es the events folder (50 ms
   debounce, 2 s poll as backup), so a claim opens the held diff ~0.3 s after
   Claude's write.
-- **Cost** — one hook run (~0.23 s on Windows) per Edit/Write/Bash call.
-  `PostToolUse` payloads include `tool_response` (file contents, command
-  output), so event files can be MB-sized; they are read once and deleted after
-  30 min.
+- **Cost** — one hook run per Edit/Write/Bash call: ~0.33 s inside Claude Code
+  on Windows (PowerShell startup; measured from `stop_hook_summary` timings).
+  `PostToolUse` payloads include `tool_input` and `tool_response` (an Edit
+  carries the whole original file), so event files are tens of KB (Edit median
+  ~32 KB) and grow with the edited file's size; they are read once and deleted
+  after 30 min.
 - **Opt-in prompt** — `offerClaudeCodeHooks` (called at the end of activation)
   asks once per user whether to switch to this mode, because it edits the global
   `~/.claude/settings.json`.
