@@ -229,9 +229,9 @@ writes; they are not a separate detection pipeline.
     - a `packages/` folder next to a `.sln` (legacy NuGet)
   - `claude-diff.excludedPaths` adds user globs (`refreshPathExclusions`): a
     one-component entry matches any component, a longer one the leading
-    workspace-relative components. Changing it (or the text-file settings)
-    calls `WorkspaceWatcher.rescanBaselines()` so files brought into scope get
-    a baseline. Restored snapshots of excluded paths are dropped at load
+    workspace-relative components. Changing it (or the text-file settings) calls
+    `WorkspaceWatcher.rescanBaselines()` so files brought into scope get a
+    baseline. Restored snapshots of excluded paths are dropped at load
     (`SnapshotStore.load`); live pending diffs are left alone.
 - **`create` vs `change` guard** — the watcher records which event a write came
   from.
@@ -311,8 +311,8 @@ turn (Quarto preview, formatters) don't open diffs.
     cover late change notices up to `claimGraceMs` (60 s) after the turn ends. A
     `PostToolUse` whose session id has no open turn (a failed turn-start hook,
     or a subagent reporting its own id — not seen on Claude Code 2.1.328, where
-    subagent payloads carry the parent's `session_id` plus `agent_id`) claims
-    in every open turn instead.
+    subagent payloads carry the parent's `session_id` plus `agent_id`) claims in
+    every open turn instead.
   - **Bash** — once the turn ran Bash, every write of that turn is Claude's (a
     command doesn't say which files it writes). Known gap: other programs'
     writes in such a turn count too.
@@ -467,7 +467,7 @@ custom-only.
   | `claude-diff.supportedFileExtensions`    | Extra extensions to treat as text (dot optional)                                                                                                                                                                                                                                                                                                                                                     |
   | `claude-diff.supportedFilenames`         | Extra exact filenames to treat as text                                                                                                                                                                                                                                                                                                                                                               |
   | `claude-diff.supportedFilenamePatterns`  | Extra basename globs (`*`, `?`) to treat as text                                                                                                                                                                                                                                                                                                                                                     |
-  | `claude-diff.excludedPaths`              | Extra folders/files to ignore on top of the built-in list: globs (`*`, `?`); a plain name matches at any depth, a path (`docs/_build`) is workspace-relative                                                                                                                                                                                         |
+  | `claude-diff.excludedPaths`              | Extra folders/files to ignore on top of the built-in list: globs (`*`, `?`); a plain name matches at any depth, a path (`docs/_build`) is workspace-relative                                                                                                                                                                                                                                         |
   | `claude-diff.maxFileLines`               | Advanced: ignore files above this many lines — no baseline, no diff (default 5000; `0` disables). Enforced in `src/watcher/fileSizeLimit.ts`, applied by `baselineScanner` and both write paths in `workspaceWatcher`. Skipped files are recorded in `BaselineStore.sizeSkipped` so that one later dropping below the limit is not mistaken for a brand-new file (which would make Revert delete it) |
   | `claude-diff.baselineScanConcurrency`    | Advanced: maximum number of files read concurrently during the initial baseline scan (default 4, range 1–16). Lower it for large or remote workspaces to reduce I/O and memory pressure.                                                                                                                                                                                                             |
   | `claude-diff.burstDetectionEnabled`      | Advanced: hold files beyond the burst threshold to confirm a git branch change before opening their diff, instead of opening immediately (see "Workspace watcher" above)                                                                                                                                                                                                                             |
