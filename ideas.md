@@ -75,17 +75,39 @@ const csc = dir && path.join(dir, 'csc.exe');
 - **Legacy `csc.exe`: nothing to check ahead of time.** It ships with Windows
   but is no longer updated. The registry lookup, compile and test run happen
   when the mode is enabled, and any failure keeps the PowerShell hook.
-- **Claude Code's launch overhead: half answered.** Claude Code records hook
+- **Claude Code's launch overhead: answered.** Claude Code records hook
   timings in the transcript (`system` entries with subtype
   `stop_hook_summary` → `hookInfos[].durationMs`). For the current PowerShell
   hook across about 1,200 `Stop` runs: median about 350 ms (p90 about 440 ms)
   against 284 ms on its own, so Claude Code adds about 70 ms. Rare outliers
   reached 3.5 s.
-  - Still open: whether a hook with no `shell` key is wrapped in another shell
-    (for example Git Bash). To measure: copy `hook.exe` to
-    `~/.claude-diff/bin/`, temporarily add a second `Stop` hook that runs it
-    with no `shell` key and writes to a separate folder, do a few turns, and
-    compare the two hooks' `durationMs`.
+  - **A hook with no `shell` key runs through Git Bash, but that's cheap.**
+    Tested 2026-11-20 with Claude Code CLI 2.1.318 (headless `claude -p` in a
+    scratch folder, test hook in that folder's `.claude/settings.local.json`).
+    A probe exe logged its process ancestry as
+    `probe.exe <- bash.exe <- bash.exe <- claude.exe`, with `MSYSTEM=UCRT64`
+    and `SHELL=C:\Program Files\Git\bin\bash.exe`. Then the plain `hook.exe`
+    ran as a second `Stop` hook for three turns:
+
+      | Hook                                     | `durationMs` inside Claude Code |
+      | ---------------------------------------- | ------------------------------- |
+      | Current PowerShell hook                  | 323, 346, 331                   |
+      | `hook.exe`, no `shell` key (via Git Bash) | 117, 116, 113                   |
+
+    Outside Claude: `hook.exe` 42 ms directly, 81 ms through `bash -c`. So
+    the 115 ms is about 40 ms helper + 40 ms Git Bash + 35 ms Claude Code.
+    The real saving is **about 220 ms per hook run**. Bash can't be skipped
+    (`shell: "powershell"` would bring PowerShell's startup back), so about
+    115 ms is the floor for any hook here. On a machine without Git for
+    Windows, Claude Code would use a different shell, so the wrapper cost
+    would differ.
+
+**Verdict (2026-11-20): don't build it now.** The helper works and the risks
+are covered, but the saving is small at real usage. Over 30 days, turns that
+made Edit/Write/Bash calls made a median of 2 such calls (p90 7), and
+`PostToolUse` took a median 0.4% of turn time (p90 3.6%). About 220 ms per
+call adds up to roughly 4 minutes a month, plus about the same for the turn
+hooks. Revisit if turns get much more tool-heavy.
 
 **Side finding (fixed 2026-11-20).** `~/.claude/settings.json` still had
 `Stop` and `UserPromptSubmit` hooks writing to
@@ -100,7 +122,8 @@ entries from the session transcript (`transcript_path` in the hook payload) so
 no per-edit hook is needed. Combined: transcript claims for edits, helper for
 the two turn-boundary hooks.
 
-Benchmark scripts (`hook.cs`, `bench.js`): the scratchpad of session `fed25485`,
+Benchmark and probe scripts (`bench/hook.cs`, `bench/bench.js`,
+`probe/probe.cs`, `probe/bashcost.js`): the scratchpad of session `fed25485`,
 which may be cleared. The C# source is the 15-line stdin-to-file copy described
 above.
 
