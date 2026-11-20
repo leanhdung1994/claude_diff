@@ -157,6 +157,18 @@ export class WorkspaceWatcher {
     this.disposables.push(d);
   }
 
+  /**
+   * Baseline the files a settings change just brought into scope (a removed
+   * exclusion, a new text extension). Without a baseline their next `create`
+   * would look like a brand-new file and Revert would delete it. Files that
+   * already have a baseline keep it; writes during the scan are queued.
+   */
+  rescanBaselines(): void {
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      void this.watchFolder(folder.uri.fsPath);
+    }
+  }
+
   private applyBurstConfig(): void {
     this.burstMeter.updateConfig(this.loadBurstMeterConfig());
     const config = vscode.workspace.getConfiguration('claude-diff');

@@ -161,7 +161,8 @@ function compileGlobPatterns(values: string[]): RegExp[] {
   return patterns;
 }
 
-function globToRegExp(pattern: string): RegExp {
+/** `*` = any run of characters, `?` = one character; case-insensitive, whole string. */
+export function globToRegExp(pattern: string): RegExp {
   let source = '^';
   for (const ch of pattern) {
     if (ch === '*') {

@@ -9,10 +9,14 @@
  * case-insensitively so a lowercased (Windows-normalised) path and an
  * on-disk-case path give the same answer. The file name itself counts as a
  * component, so `.env`, `.classpath` and `.project` files are excluded too.
+ *
+ * `claude-diff.excludedPaths` adds to the built-in list (see
+ * refreshPathExclusions).
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { globToRegExp } from './fileTypeRules';
 
 /** Lowercase. Dependency, build-output, VCS and tool-cache directories. */
 const EXCLUDED_SEGMENTS = new Set([
@@ -118,6 +122,41 @@ function workspaceRelative(absPath: string): { root: string; segments: string[] 
   return best;
 }
 
+/**
+ * User exclusions from `claude-diff.excludedPaths`, one glob per path
+ * component. A one-component entry (`_site`, `*.generated.ts`) matches any
+ * component; a longer one (`docs/_build`) matches the leading components of
+ * the workspace-relative path, i.e. that folder and everything under it.
+ */
+let customExclusions: { anywhere: RegExp[]; prefixes: RegExp[][] } | undefined;
+
+/** Re-read `claude-diff.excludedPaths`. Callers must rescan baselines afterwards. */
+export function refreshPathExclusions(): void {
+  const values = vscode.workspace.getConfiguration('claude-diff').get<string[]>('excludedPaths', []);
+  const anywhere: RegExp[] = [];
+  const prefixes: RegExp[][] = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    if (typeof value !== 'string') { continue; }
+    const parts = value.trim().replace(/\\/g, '/').split('/').filter(p => p && p !== '.');
+    if (parts.length === 0) { continue; }
+    const globs = parts.map(globToRegExp);
+    if (globs.length === 1) {
+      anywhere.push(globs[0]);
+    } else {
+      prefixes.push(globs);
+    }
+  }
+  customExclusions = { anywhere, prefixes };
+}
+
+function isCustomExcluded(segments: string[]): boolean {
+  if (!customExclusions) { refreshPathExclusions(); }
+  const { anywhere, prefixes } = customExclusions!;
+  if (anywhere.length > 0 && segments.some(s => anywhere.some(re => re.test(s)))) { return true; }
+  return prefixes.some(globs =>
+    globs.length <= segments.length && globs.every((re, i) => re.test(segments[i])));
+}
+
 /** True when the file must be neither baselined nor diffed. Outside the workspace counts as excluded. */
 export function isExcludedPath(absPath: string): boolean {
   const location = workspaceRelative(absPath);
@@ -130,5 +169,5 @@ export function isExcludedPath(absPath: string): boolean {
       return true;
     }
   }
-  return false;
+  return isCustomExcluded(segments);
 }

@@ -4,6 +4,7 @@ import { SnapshotContentProvider } from './diff/snapshotContentProvider';
 import { SNAPSHOT_SCHEME } from './diff/snapshotUri';
 import { WorkspaceWatcher } from './watcher/workspaceWatcher';
 import { refreshTextFileRules } from './watcher/fileTypeRules';
+import { refreshPathExclusions } from './watcher/pathExclusions';
 import { refreshFileSizeLimit } from './watcher/fileSizeLimit';
 import { GitBranchWatcher } from './watcher/gitBranchWatcher';
 import { registerAllCommands } from './commands/commandsRegistry';
@@ -48,6 +49,7 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
   debugLog(`activate:start mode=${context.extensionMode} workspace=${vscode.workspace.workspaceFile?.fsPath ?? 'none'}`);
 
   refreshTextFileRules();
+  refreshPathExclusions();
   refreshFileSizeLimit();
   debugLog('activate:configuration initialized');
 
@@ -85,6 +87,11 @@ async function activateExtension(context: vscode.ExtensionContext): Promise<void
           e.affectsConfiguration('claude-diff.supportedFilenames') ||
           e.affectsConfiguration('claude-diff.supportedFilenamePatterns')) {
         refreshTextFileRules();
+        workspaceWatcher.rescanBaselines();
+      }
+      if (e.affectsConfiguration('claude-diff.excludedPaths')) {
+        refreshPathExclusions();
+        workspaceWatcher.rescanBaselines();
       }
       if (e.affectsConfiguration('claude-diff.maxFileLines')) {
         refreshFileSizeLimit();

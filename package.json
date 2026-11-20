@@ -237,10 +237,19 @@
           "order": 4,
           "description": "Extra file name globs (`*`, `?`) to treat as text, matched against the base name."
         },
+        "claude-diff.excludedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 5,
+          "markdownDescription": "Extra folders or files to ignore (no baseline, no diff), on top of the built-in list (`node_modules`, `.git`, `.quarto`, `dist`, …). Globs (`*`, `?`), case-insensitive. A plain name such as `_site` or `*.generated.ts` matches at any depth; a path such as `docs/_build` is relative to the workspace folder and covers everything under it. Pending diffs in a newly excluded path stay until you accept or revert them, or until the window reloads."
+        },
         "claude-diff.soundNotificationsEnabled": {
           "type": "boolean",
           "default": false,
-          "order": 5,
+          "order": 6,
           "description": "Play a sound when Claude finishes a turn or needs input (Windows only). Adds Notification/Stop hooks to ~/.claude/settings.json."
         },
         "claude-diff.maxFileLines": {
